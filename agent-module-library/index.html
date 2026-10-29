@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AICC - 智能体平台</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- TOP BAR -->
+<header class="topbar">
+  <div class="topbar-logo"><div class="logo-icon">A</div>AICC</div>
+  <div class="topbar-space"><span>🏢 空间</span><span style="margin-left:auto;font-size:10px;color:#A9ABB0">▼</span></div>
+  <span class="topbar-time" id="topbarTime">01:38:09</span>
+  <div class="topbar-search"><span class="search-icon">🔍</span><input type="text" placeholder="输入语音号等并搜..."></div>
+  <div class="topbar-right">
+    <button class="topbar-btn primary">💬 空闲</button>
+    <button class="topbar-btn">☎️ 空闲</button>
+    <button class="topbar-icon-btn">🔔</button>
+    <button class="topbar-icon-btn">📋</button>
+    <div class="topbar-avatar">A</div>
+  </div>
+</header>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="sidebar-search" style="position:relative"><span class="search-icon" style="left:12px">🔍</span><input type="text" placeholder="功能搜索"></div>
+  <ul class="sidebar-nav">
+    <li class="sidebar-item" onclick="navigateTo('list')"><span class="icon">🏠</span><span class="label">首页</span></li>
+    <li class="sidebar-item"><span class="icon">📞</span><span class="label">呼叫中心</span><span class="arrow">▶</span></li>
+    <li class="sidebar-item"><span class="icon">💬</span><span class="label">在线客服</span><span class="arrow">▶</span></li>
+    <li class="sidebar-item"><span class="icon">📋</span><span class="label">工单管理</span><span class="arrow">▶</span></li>
+    <li class="sidebar-item"><span class="icon">📹</span><span class="label">视频客服</span><span class="arrow">▶</span></li>
+    <li class="sidebar-item"><span class="icon">👥</span><span class="label">客户管理</span><span class="arrow">▶</span></li>
+    <li class="sidebar-item"><span class="icon">📱</span><span class="label">短信中心</span><span class="arrow">▶</span></li>
+    <li class="sidebar-item"><span class="icon">📚</span><span class="label">智能知识库</span><span class="arrow">▶</span></li>
+    <li class="sidebar-item expanded" onclick="toggleSubmenu(this)">
+      <span class="icon">🤖</span><span class="label">智能体</span><span class="arrow">▶</span>
+    </li>
+    <ul class="submenu show">
+      <li class="sidebar-item active" data-nav="list" onclick="navigateTo('list')"><span class="label">智能体搭建</span><span class="tag new">NEW</span></li>
+      <li class="sidebar-item"><span class="label">配置版本</span><span class="tag hot">HOT</span></li>
+    </ul>
+    <li class="sidebar-item" data-nav="modules" onclick="openModuleLibrary(false)"><span class="icon">🧩</span><span class="label">模块库</span></li>
+    <li class="sidebar-item"><span class="icon">🤖</span><span class="label">机器人</span></li>
+    <li class="sidebar-item"><span class="icon">✅</span><span class="label">智能质检</span></li>
+    <li class="sidebar-item"><span class="icon">📝</span><span class="label">质检评审</span></li>
+    <li class="sidebar-item"><span class="icon">⚙️</span><span class="label">系统设置</span></li>
+  </ul>
+</aside>
+
+<!-- MAIN CONTENT -->
+<main class="main-content">
+
+  <!-- PAGE: AGENT LIST -->
+  <div class="page active" id="page-list">
+    <div class="page-header">
+      <div class="page-tabs">
+        <button class="page-tab">首页</button>
+        <button class="page-tab active">智能体搭建</button>
+      </div>
+    </div>
+    <div class="secondary-nav">
+      <div class="secondary-tab active"><span>🤖</span> 智能体</div>
+      <div class="secondary-tab"><span>🔄</span> 工作流 <span class="count">3</span></div>
+      <div class="secondary-tab"><span>📚</span> 知识库</div>
+      <div class="secondary-tab"><span>🔧</span> 工具</div>
+      <div class="secondary-tab"><span>💾</span> 记忆</div>
+    </div>
+    <div class="search-row">
+      <button class="dropdown-btn">☐ 我创建的 ▼</button>
+      <button class="dropdown-btn">🏷️ 全部标签 ▼</button>
+      <div class="search-input-wrap"><span class="search-icon">🔍</span><input type="text" placeholder="搜索"></div>
+    </div>
+    <div style="display:flex;gap:40px">
+      <div class="create-section">
+        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">创建应用</div>
+        <div class="create-options">
+          <div class="create-option" onclick="navigateTo('editor')"><div class="opt-icon">📄</div><span>创建空白应用</span></div>
+          <div class="create-option"><div class="opt-icon">📑</div><span>从应用模板创建</span></div>
+          <div class="create-option"><div class="opt-icon">📥</div><span>导入 DSL 文件</span></div>
+        </div>
+      </div>
+      <div class="card-grid" id="agentCardGrid" style="flex:1"></div>
+    </div>
+  </div>
+
+  <!-- PAGE: MODULE LIBRARY -->
+  <div class="page" id="page-modules">
+    <div class="module-page-header">
+      <div>
+        <button class="btn-plain" id="moduleBackBtn" style="display:none;margin-bottom:14px" onclick="backToEditor()">← 返回智能体</button>
+        <h2 class="module-page-title">智能体模块库</h2>
+        <p class="module-page-subtitle">将经过沉淀的提示词及其所需工具，添加到智能体后进行个性化配置。</p>
+      </div>
+      <button class="btn-primary" onclick="openModuleForm()">＋ 创建模块</button>
+    </div>
+    <div class="module-toolbar">
+      <div class="search-input-wrap" style="max-width:300px">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="moduleSearchInput" placeholder="搜索模块" oninput="renderModuleLibrary()">
+      </div>
+      <div class="filter-chips">
+        <div class="filter-chip active" data-mtype="all" onclick="setModuleTypeFilter(this)">全部</div>
+        <div class="filter-chip" data-mtype="prompt" onclick="setModuleTypeFilter(this)">提示词</div>
+        <div class="filter-chip" data-mtype="prompt_tool" onclick="setModuleTypeFilter(this)">提示词＋工具</div>
+      </div>
+    </div>
+    <div class="module-grid" id="moduleGrid"></div>
+  </div>
+
+  <!-- PAGE: EDITOR -->
+  <div class="page editor-page" id="page-editor">
+    <div class="editor-layout">
+      <div class="editor-main">
+        <div class="editor-header">
+          <button class="editor-back" onclick="navigateTo('list')">←</button>
+          <div class="editor-title">编排 · 智能呼入机器人（儿童手表）</div>
+          <span class="draft-tag">草稿</span>
+        </div>
+        <div class="editor-body">
+          <div class="editor-left">
+            <div class="prompt-section">
+
+              <!-- 提示词 -->
+              <div class="section-title">提示词 <span class="required">*</span></div>
+              <div class="prompt-textarea-wrap">
+                <div class="prompt-editor-toolbar">
+                  <button class="prompt-action-btn" onclick="toast('AI 生成提示词（原型演示）')">✨ 生成</button>
+                  <button class="prompt-action-btn accent" onclick="openInsertModuleModal()">🧩 插入模块</button>
+                  <button class="prompt-action-btn" onclick="openFinalPromptPreview()">👁 预览最终提示词</button>
+                </div>
+                <div class="prompt-editor" id="promptEditor" contenteditable="true" spellcheck="false"></div>
+              </div>
+
+              <!-- 已安装模块 -->
+              <div class="tool-section" id="installedModulesSection">
+                <div class="section-title">已安装模块（<span id="installedCount">0</span>）
+                  <button class="section-add-btn" onclick="openModulePickerFromEditor()">＋ 添加模块</button>
+                </div>
+                <div class="installed-list" id="installedModuleList"></div>
+              </div>
+
+              <!-- 变量 -->
+              <div class="variable-section">
+                <div class="section-title">变量 <button class="section-add-btn">＋ 添加</button></div>
+                <div class="var-list">
+                  <div class="var-item"><div class="var-key">📌 cdr_customer_number</div><span>cdr_customer_number</span><span class="var-type">随路变量 paragraph</span></div>
+                  <div class="var-item"><div class="var-key">📌 content</div><span>content</span><span class="var-type">随路变量 string</span></div>
+                  <div class="var-item"><div class="var-key">📌 product</div><span>product</span><span class="var-type">随路变量 string</span></div>
+                </div>
+              </div>
+
+              <!-- 知识库工具 -->
+              <div class="tool-section">
+                <div class="section-title">知识库工具 <button class="section-add-btn">＋ 添加</button></div>
+                <div style="font-size:13px;color:var(--text-tertiary);padding:8px 0">暂无知识库工具，点击右上角添加</div>
+              </div>
+
+              <!-- 工具 -->
+              <div class="tool-section">
+                <div class="section-title">工具 <span style="font-size:12px;color:var(--text-tertiary);font-weight:400" id="toolCountLabel"></span>
+                  <button class="section-add-btn">＋ 添加</button>
+                </div>
+                <div class="var-list" id="toolList"></div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- 右侧：调试与预览 -->
+          <div class="editor-right">
+            <div class="debug-panel">
+              <div class="debug-header">
+                <span class="debug-title">调试与预览</span>
+                <div class="debug-model-select">
+                  <span class="model-tag">🤖 doubao-seed-2.0-lite</span>
+                  <button class="topbar-btn primary" style="padding:5px 14px;font-size:12px" onclick="toast('已发布当前草稿（原型演示）')">发布 ▼</button>
+                </div>
+              </div>
+              <div class="debug-body">
+                <div class="debug-field"><div class="debug-label">cdr_customer_number <span class="optional">(选填)</span></div><input class="debug-input" type="text" placeholder="cdr_customer_number"></div>
+                <div class="debug-field"><div class="debug-label">content <span class="optional">(选填)</span></div><input class="debug-input" type="text" placeholder="content"></div>
+                <div class="debug-field"><div class="debug-label">product <span class="optional">(选填)</span></div><input class="debug-input" type="text" placeholder="product"></div>
+                <div class="chat-preview">
+                  <div class="chat-msg bot"><div class="chat-msg-avatar bot">🤖</div><div class="chat-msg-bubble">您好，我是三六零智慧生活客服安安，请问有什么可以帮您？</div></div>
+                  <div class="chat-input-area">
+                    <textarea placeholder="和机器人聊天" rows="1"></textarea>
+                    <button class="chat-send-btn" onclick="toast('演示环境未接入模型')">➤</button>
+                  </div>
+                </div>
+              </div>
+              <div class="debug-footer"><span class="debug-msg">功能已开启 · 管理 →</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- DRAWER: 公共模块详情 -->
+<div class="drawer-mask" id="moduleDetailMask" onclick="closeDrawer('moduleDetail')"></div>
+<div class="drawer" id="moduleDetailDrawer">
+  <div class="drawer-header">
+    <span class="drawer-title">模块详情</span>
+    <button class="drawer-close" onclick="closeDrawer('moduleDetail')">✕</button>
+  </div>
+  <div class="drawer-body" id="moduleDetailBody"></div>
+  <div class="drawer-footer" id="moduleDetailFooter"></div>
+</div>
+
+<!-- DRAWER: 编辑当前智能体版本 -->
+<div class="drawer-mask" id="moduleEditMask" onclick="closeDrawer('moduleEdit')"></div>
+<div class="drawer" id="moduleEditDrawer">
+  <div class="drawer-header">
+    <span class="drawer-title" id="moduleEditTitle">编辑模块</span>
+    <button class="drawer-close" onclick="closeDrawer('moduleEdit')">✕</button>
+  </div>
+  <div class="drawer-body" id="moduleEditBody"></div>
+  <div class="drawer-footer">
+    <button class="btn-plain" onclick="closeDrawer('moduleEdit')">取消</button>
+    <button class="btn-plain" onclick="viewPublicTemplateFromEdit()">查看公共模板</button>
+    <button class="btn-primary" onclick="saveModuleEdit()">保存修改</button>
+  </div>
+</div>
+
+<!-- DRAWER: 创建 / 编辑公共模块 -->
+<div class="drawer-mask" id="moduleFormMask" onclick="closeDrawer('moduleForm')"></div>
+<div class="drawer" id="moduleFormDrawer">
+  <div class="drawer-header">
+    <span class="drawer-title" id="moduleFormTitle">创建模块</span>
+    <button class="drawer-close" onclick="closeDrawer('moduleForm')">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div class="form-field"><label>模块名称 *</label><input id="formModuleName" class="debug-input" placeholder="例如：手机号收集与校验"></div>
+    <div class="form-field"><label>功能说明 *</label><input id="formModuleDesc" class="debug-input" placeholder="一句话说明模块解决什么问题"></div>
+    <div class="form-field"><label>模块类型</label>
+      <select id="formModuleType" class="debug-input" onchange="toggleFormTools()">
+        <option value="prompt">提示词</option>
+        <option value="prompt_tool">提示词＋工具</option>
+      </select>
+    </div>
+    <div class="form-field"><label>维护者</label><input id="formModuleMaintainer" class="debug-input" placeholder="团队或负责人"></div>
+    <div class="form-field"><label>提示词正文 *</label><textarea id="formModulePrompt" class="debug-input" style="min-height:200px;resize:vertical" placeholder="公共模板提示词，添加到智能体后可独立修改"></textarea></div>
+    <div class="form-field" id="formToolsSection">
+      <label>包含工具（安装模块时自动带入智能体）</label>
+      <div id="formToolRows" class="var-list"></div>
+      <button class="add-btn" onclick="addFormTool()">＋ 添加工具</button>
+    </div>
+  </div>
+  <div class="drawer-footer">
+    <button class="btn-plain" onclick="closeDrawer('moduleForm')">取消</button>
+    <button class="btn-primary" onclick="saveModuleForm()">保存</button>
+  </div>
+</div>
+
+<!-- MODAL: 安装确认 -->
+<div class="modal-mask" id="installConfirmMask">
+  <div class="modal">
+    <div class="modal-title" id="installConfirmTitle"></div>
+    <div class="modal-body" id="installConfirmBody"></div>
+    <div class="modal-footer">
+      <button class="btn-plain" onclick="closeModal('installConfirm')">取消</button>
+      <button class="btn-primary" onclick="confirmInstall()">确认添加</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: 插入模块 -->
+<div class="modal-mask" id="insertModuleMask">
+  <div class="modal">
+    <div class="modal-title">插入模块</div>
+    <div class="modal-body"><div id="insertModuleList" class="insert-module-list"></div></div>
+    <div class="modal-footer"><button class="btn-plain" onclick="closeModal('insertModule')">取消</button></div>
+  </div>
+</div>
+
+<!-- MODAL: 预览最终提示词 -->
+<div class="modal-mask" id="finalPromptMask">
+  <div class="modal modal-lg">
+    <div class="modal-title">预览最终提示词 <span class="modal-subtitle">模块引用已展开为当前智能体版本的实际内容</span></div>
+    <div class="modal-body"><div class="final-prompt-view" id="finalPromptView"></div></div>
+    <div class="modal-footer"><button class="btn-primary" onclick="closeModal('finalPrompt')">关闭</button></div>
+  </div>
+</div>
+
+<!-- MODAL: 模块引用操作 -->
+<div class="modal-mask" id="refActionMask">
+  <div class="modal">
+    <div class="modal-title" id="refActionTitle"></div>
+    <div class="modal-body" id="refActionBody"></div>
+    <div class="modal-footer">
+      <button class="btn-plain" onclick="closeModal('refAction')">关闭</button>
+      <button class="btn-plain danger" onclick="removeCurrentRef()">移除引用</button>
+      <button class="btn-primary" onclick="editCurrentRef()">编辑模块</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
