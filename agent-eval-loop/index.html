@@ -1460,7 +1460,7 @@
       seedCase('TC-015','投诉客户及时转人工','scenario','review'),
       seedCase('TC-016','预约系统超时后的回复','scenario','error')
     ];
-    const initialRun = buildRun('RUN-1042','R12 上线前全量测试','R12 · 当前草稿','生产参考智能体 · R10',salesTests.slice(1),[
+    const initialRun = buildRun('RUN-1042','R12 上线前全量测试','R12 · 当前草稿','未运行参考智能体',salesTests.slice(1),[
       {production:'pass',draft:'pass'},
       {production:'fail',draft:'fail'},
       {production:'fail',draft:'pass'},
@@ -1471,7 +1471,7 @@
     initialRun.results.find(r=>r.caseId==='TC-012').issueId='BC-081';
     initialRun.results.find(r=>r.caseId==='TC-012').humanStatus='已经确认';
     initialRun.results.find(r=>r.caseId==='TC-012').humanConclusion='agent-issue';
-    const fixedRun = buildRun('RUN-1041','价格与保养专项测试','R12 · 当前草稿','生产参考智能体 · R10 · 已保存结果',[salesTests[1],salesTests[4]],['pass','pass'],'今天 15:18','saved-reference');
+    const fixedRun = buildRun('RUN-1041','价格与保养专项测试','R12 · 当前草稿','未运行参考智能体',[salesTests[1],salesTests[4]],['pass','pass'],'今天 15:18','saved-reference');
 
     const db = {
       'bmw-sales': {
@@ -1557,7 +1557,7 @@
           const start=(index*3)%Math.max(1,ready.length-4),cases=ready.slice(start,start+(index===4?8:4+index%3));
           const outcomes=cases.map((c,i)=>['pass','pass','review','pass','fail','pass','error'][(i+index)%7]);
           const agent=agents.find(a=>a.id===agentId),version=agentId==='bmw-sales'?(index<2?'R11 · 历史版本':'R12 · 当前版本'):'R1 · 当前版本';
-          const baseline=agentId==='bmw-sales'?'生产参考智能体 · R10':'没有线上版本';
+          const baseline=agentId==='bmw-sales'?'未运行参考智能体':'没有线上版本';
           data.runs.push(buildRun(`RUN-${agentId==='bmw-sales'?'S':'A'}-${201+index}`,`${version.split(' ')[0]} ${name}`,version,baseline,cases,outcomes,`10 月 ${28+index} 日`,'draft-only'));
         });
         data.rules=ruleCatalog.map((item,index)=>({...clone(item),id:`RUL-${agentId==='bmw-sales'?'S':'A'}-${101+index}`}));
@@ -1721,7 +1721,7 @@
     }
     function renderRuns() {
       const runs=currentRuns(),agent=currentAgent();
-      return `<div class="page"><div class="page-head"><div class="page-head-copy"><h1>测试任务</h1><p class="page-sub">当前草稿始终通过调试接口运行。日常修改可以只测草稿；需要相对比较时，选择独立的生产参考智能体或复用仍有效的参考结果。</p></div></div>
+      return `<div class="page"><div class="page-head"><div class="page-head-copy"><h1>测试任务</h1><p class="page-sub">当前草稿始终通过调试接口运行。测试只针对草稿本身，按用例要求判断处理是否正确。</p></div></div>
       ${runs.length?`<div class="card table-card"><div class="table-scroll"><table><thead><tr><th>任务名称</th><th>被测智能体</th><th>被测版本</th><th>已完成范围</th><th>处理正确</th><th>处理有问题</th><th>待人工看</th><th>执行状态</th><th>时间</th></tr></thead><tbody>${runs.map(run=>{const s=runStats(run);return `<tr data-action="open-report" data-id="${run.id}" tabindex="0"><td><div class="cell-main">${esc(run.name)}</div><div class="cell-sub">${run.id}</div></td><td><div class="cell-main">${esc(run.agentName||agent.name)}</div><div class="cell-sub">测试副本</div></td><td>${esc(run.version)}</td><td>${s.total} / ${run.caseIds.length}</td><td><span style="color:var(--mint);font-weight:650">${s.pass}</span></td><td><span style="color:var(--red);font-weight:650">${s.fail}</span></td><td>${s.review+s.error}</td><td>${badge(run.executionStatus,resultTone(run.executionStatus))}</td><td>${esc(run.time)}</td></tr>`}).join('')}</tbody></table></div></div>`:`<section class="card empty"><div><h2>还没有测试任务</h2><p>先确认至少一条测试用例，再开始第一次测试。</p><button class="btn primary" data-nav="tests">前往测试用例</button></div></section>`}</div>`;
     }
 
@@ -1853,7 +1853,7 @@
     function renderTranscript(result,version='draft') {
       if(!result) return '<p class="page-sub">这条用例还没有测试对话。</p>';
       const turns=version==='production'?(result.productionTranscript||[]):(result.draftTranscript||result.transcript||[]);
-      return turns.length?`<div class="transcript">${turns.map(t=>`<div class="turn ${t.who==='agent'?'agent':''}"><div class="turn-avatar">${t.who==='agent'?'AI':'用户'}</div><div><div class="bubble">${esc(t.text)}</div><div class="turn-time">${t.time}</div></div></div>`).join('')}</div>`:'<p class="page-sub">当前没有参考智能体对话。</p>';
+      return turns.length?`<div class="transcript">${turns.map(t=>`<div class="turn ${t.who==='agent'?'agent':''}"><div class="turn-avatar">${t.who==='agent'?'AI':'用户'}</div><div><div class="bubble">${esc(t.text)}</div><div class="turn-time">${t.time}</div></div></div>`).join('')}</div>`:'<p class="page-sub">当前没有对话记录。</p>';
     }
 
     function renderVersionEvidence(result,version,label) {
@@ -2307,7 +2307,7 @@
         const p=getProblem(id),f=state.generatedForm;f.criteria=f.criteriaText.split('\n').map(x=>x.trim()).filter(Boolean);f.avoid=f.avoidText.split('\n').map(x=>x.trim()).filter(Boolean);
         if(!f.name.trim()||!f.interactionPrompt?.trim()||!f.criteria.length){showToast('请补充必填内容','用例名称、完整提示词和至少一条事情办成的条件不能为空。','warn');return;}
         const test=Object.assign(blankCase('scenario'),clone(f),{id:uid('TC'),type:'scenario',creationMode:'manual',status:'ready',result:'none',baselineResult:'fail',source:'线上问题',updated:'刚刚'});delete test.problemId;delete test.criteriaText;delete test.avoidText;
-        currentTests().unshift(test);p.caseId=test.id;state.generatedForm=null;state.generatedDirty=false;state.overlay=null;state.route='tests';state.testTab='全部';showToast('正式问题已整理为测试用例',`${test.id} 可先用于草稿复测；需要相对比较时再选择生产参考智能体或已保存参考结果。`);return;
+        currentTests().unshift(test);p.caseId=test.id;state.generatedForm=null;state.generatedDirty=false;state.overlay=null;state.route='tests';state.testTab='全部';showToast('正式问题已整理为测试用例',`${test.id} 可先用于草稿复测，确认后可以在测试用例里参加正式测试。`);return;
       }
       if(action==='open-test'){openTest(id);return;}
       if(action==='open-result'){openTest(id,target.dataset.resultId);return;}
