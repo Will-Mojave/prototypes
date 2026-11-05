@@ -1282,12 +1282,41 @@
       {id:'bmw-campaign',name:'奥迪新车活动助手',avatar:'A1',status:'未上线',meta:'仅有 R1 草稿',productionVersion:null,draftVersion:'R1',hasProduction:false}
     ];
 
-    const referenceAgents = {
-      'bmw-sales': [
-        {id:'bmw-sales-reference',name:'奥迪销售顾问 · 生产参考',version:'R10',status:'配置已冻结',checkedAt:'今天 14:20',source:'从生产智能体复制并核对',appId:'dify-ref-sales-r10'}
-      ],
-      'bmw-campaign': []
-    };
+
+    const tenantAgentCaseSources = [
+      {id:'sales-test-copy',name:'奥迪销售顾问 · 测试副本',version:'R11',status:'已确认 3 条用例',cases:[
+        {name:'价格追问与加微信报价',prompt:'客户想了解奥迪 A4L 的价格，但暂时不方便到店。客户会先问价格和优惠，被邀请到店时说明不便，并询问能否加微信获取报价。',criteria:['说明价格区间或给出报价','可以加微信并留下联系方式'],avoid:['不能承诺无法确认的优惠政策']},
+        {name:'试驾预约遇到系统超时',prompt:'客户希望预约周六下午试驾，会提供车型和测试手机号。预约系统返回超时，客户会根据回复决定重试或要求人工协助。',criteria:['如实说明预约结果尚未确认','提供重试或人工协助'],avoid:['系统超时时不能声称预约成功']},
+        {name:'优惠活动已经结束',prompt:'客户看到旧活动海报询问优惠是否还有，实际活动已经结束。客户会追问是否有替代方案。',criteria:['明确说明活动已结束','给出当前可用的替代方案'],avoid:['不能继续按已结束的活动承诺价格']}
+      ]},
+      {id:'campaign-copy',name:'奥迪新车活动助手',version:'R1',status:'已确认 2 条用例',cases:[
+        {name:'活动资格确认',prompt:'客户询问自己是否符合新车活动资格，会提供所在城市和购车时间。',criteria:['说明资格条件','给出下一步操作'],avoid:['不能承诺一定获得名额']},
+        {name:'活动门店查询',prompt:'客户想了解附近参与活动的门店，会提供所在区域。',criteria:['给出可核实的门店信息'],avoid:['不能编造门店地址']}
+      ]},
+      {id:'service-copy',name:'售后保养预约助手',version:'R3',status:'已确认 2 条用例',cases:[
+        {name:'保养预约改期',prompt:'客户原定周六保养，临时需要改到周日，会提供预约手机号。',criteria:['确认改期结果'],avoid:['改期失败时不能声称已经改好']},
+        {name:'保养项目咨询',prompt:'客户询问两万公里保养包含哪些项目，会追问价格。',criteria:['说明保养项目','给出价格范围或说明需到店确认'],avoid:['不能虚报低价引流']}
+      ]}
+    ];
+
+    const manualImportPrompt = [
+      '你是测试用例编写助手。请阅读我提供的业务资料，按下面的 JSON 结构输出 3 到 5 条智能体测试用例。',
+      '只输出 JSON，不要解释，不要加代码块标记。',
+      '{',
+      '  "cases": [',
+      '    {',
+      '      "name": "用例名称，一句话说明客户要办什么事",',
+      '      "interactionPrompt": "完整的客户模拟提示词：客户是谁、想完成什么、第一次会怎么说、会提供哪些信息、如何根据智能体回复继续交流、什么情况下结束",',
+      '      "successCriteria": ["事情办成的条件，每行一条"],',
+      '      "prohibited": ["明确不能发生的情况，每行一条"],',
+      '      "variables": [{"name": "变量名", "type": "文本", "value": "测试值"}],',
+      '      "toolMocks": [{"id": "系统.操作", "label": "模拟系统调用", "mode": "mock"}],',
+      '      "maxTurns": 10',
+      '    }',
+      '  ]',
+      '}',
+      '要求：一条用例只覆盖一类客户场景；不要照抄历史通话原文；successCriteria 和 prohibited 必须能被对话内容或系统操作证据判断。'
+    ].join(String.fromCharCode(10));
 
     const productionSourceAgents = [
       {id:'prod-sales',name:'奥迪销售顾问（生产）',version:'R10',calls:'12,486',lastSync:'刚刚',description:'销售咨询、报价、留资与试驾预约'},
@@ -1301,6 +1330,38 @@
         question:'',expectedAnswer:'',answerSource:'',interactionPrompt:'',maxTurns:'10',
         variables:[],tools:[],criteria:[],avoid:[]
       };
+    }
+
+    function normalizeImportedCases(raw) {
+      const list=Array.isArray(raw)?raw:Array.isArray(raw&&raw.cases)?raw.cases:[];
+      const asList=value=>{
+        if(Array.isArray(value)) return value.map(item=>String(item).trim()).filter(Boolean);
+        if(typeof value!=='string') return [];
+        return value.split(/[；;\r\n]+/).map(item=>item.trim()).filter(Boolean);
+      };
+      return list.map(item=>{
+        if(!item||typeof item!=='object') return null;
+        const name=String(item.name||item.title||'').trim();
+        const prompt=String(item.interactionPrompt||item.prompt||'').trim();
+        if(!name||!prompt) return null;
+        const c=blankCase('scenario');
+        c.id=uid('TC');c.name=name;c.interactionPrompt=prompt;c.status='pending';c.source='JSON 导入';
+        c.maxTurns=String(item.maxTurns||10);
+        c.criteria=asList(item.successCriteria||item.criteria);
+        c.avoid=asList(item.prohibited||item.avoid);
+        c.variables=(Array.isArray(item.variables)?item.variables:[]).map(v=>({id:uid('VAR'),name:String((v&&v.name)||'变量'),type:['文本','数字','布尔'].includes(v&&v.type)?v.type:'文本',value:String(v&&v.value!=null?v.value:''),required:!!(v&&v.required),sensitive:!!(v&&v.sensitive)}));
+        const mocks=Array.isArray(item.toolMocks)?item.toolMocks:Array.isArray(item.tools)?item.tools:[];
+        c.tools=mocks.map(t=>({id:String((t&&t.id)||'tool.call'),label:String((t&&t.label)||'模拟系统调用'),mode:['mock','sandbox','blocked'].includes(t&&t.mode)?t.mode:'mock'}));
+        return c;
+      }).filter(Boolean);
+    }
+
+    function draftFromAgentCase(item,source) {
+      const c=blankCase('scenario');
+      c.id=uid('TC');c.name=item.name;c.interactionPrompt=item.prompt;c.status='pending';
+      c.source='从 '+source.name+' 导入';
+      c.criteria=clone(item.criteria||[]);c.avoid=clone(item.avoid||[]);
+      return c;
     }
 
     function demoCase(type='scenario') {
@@ -1384,8 +1445,8 @@
     }
 
     function buildRun(id,name,version,baseline,cases,outcomes,time='刚刚',comparisonMode=null) {
-      const mode=comparisonMode||(baseline==='没有线上版本'||baseline==='未运行参考智能体'?'draft-only':'reference-agent');
-      const hasReference=mode!=='draft-only';
+      const mode='draft-only';
+      const hasReference=false;
       return {id,name,version,baseline,time,executionStatus:'已完成',comparisonMode:mode,caseIds:cases.map(c=>c.id),
         results:cases.map((c,i)=>makeResult(c,outcomes[i]||'pass',null,hasReference)),caseSnapshots:Object.fromEntries(cases.map(c=>[c.id,clone(c)]))};
     }
@@ -1497,7 +1558,7 @@
           const outcomes=cases.map((c,i)=>['pass','pass','review','pass','fail','pass','error'][(i+index)%7]);
           const agent=agents.find(a=>a.id===agentId),version=agentId==='bmw-sales'?(index<2?'R11 · 历史版本':'R12 · 当前版本'):'R1 · 当前版本';
           const baseline=agentId==='bmw-sales'?'生产参考智能体 · R10':'没有线上版本';
-          data.runs.push(buildRun(`RUN-${agentId==='bmw-sales'?'S':'A'}-${201+index}`,`${version.split(' ')[0]} ${name}`,version,baseline,cases,outcomes,`10 月 ${28+index} 日`,agentId==='bmw-sales'?'reference-agent':'draft-only'));
+          data.runs.push(buildRun(`RUN-${agentId==='bmw-sales'?'S':'A'}-${201+index}`,`${version.split(' ')[0]} ${name}`,version,baseline,cases,outcomes,`10 月 ${28+index} 日`,'draft-only'));
         });
         data.rules=ruleCatalog.map((item,index)=>({...clone(item),id:`RUL-${agentId==='bmw-sales'?'S':'A'}-${101+index}`}));
         data.discoverySettings=clone(defaultDiscoverySettings);
@@ -1544,7 +1605,7 @@
     const state = {
       agentId:'bmw-sales',route:'tests',overlay:null,agentMenu:false,testTab:'全部',discoveryTab:'等待确认',discoverySub:'继续观察',onlineView:'issues',reportTab:'需处理',
       selectedTests:new Set(),caseForm:null,caseDirty:false,generatedForm:null,generatedDirty:false,reviewForm:{},problemForm:{},ruleForm:null,ruleTab:'全部规则',
-      runForm:{scope:'all',name:'',caseIds:[],compareMode:'draft-only',referenceAgentId:'bmw-sales-reference',referenceConfirmed:false,sandboxConfirmed:false},reportId:'RUN-1042',runProgress:0,activeJob:null,toast:null,analysisRunning:false
+      runForm:{scope:'all',name:'',caseIds:[],compareMode:'draft-only',sandboxConfirmed:false},reportId:'RUN-1042',runProgress:0,activeJob:null,toast:null,analysisRunning:false
     };
 
     const currentAgent = () => agents.find(a=>a.id===state.agentId)||agents[0];
@@ -1570,16 +1631,6 @@
       return result.systemResult;
     }
 
-    function comparisonFor(result) {
-      const draft=effectiveResult(result),production=result.productionResult??result.baselineResult;
-      if(!production) return {key:'draft-only',label:'仅运行草稿版本',tone:'info'};
-      if(draft==='error'||production==='error') return {key:'incomplete',label:'测试未完成',tone:'review'};
-      if(draft==='review'||production==='review') return {key:'review',label:'需要人工确认',tone:'review'};
-      if(production==='fail'&&draft==='pass') return {key:'resolved',label:'已解决',tone:'pass'};
-      if(production==='pass'&&draft==='fail') return {key:'regression',label:'新增退化',tone:'fail'};
-      if(production==='pass'&&draft==='pass') return {key:'kept',label:'能力保持正常',tone:'pass'};
-      return {key:'unresolved',label:'问题仍未解决',tone:'fail'};
-    }
 
     function runStats(run) {
       const stats={pass:0,fail:0,review:0,error:0,total:run?run.results.length:0};
@@ -1595,10 +1646,9 @@
     function gateFor(run) {
       if(!run||!run.results.length||run.executionStatus==='已取消') return {tone:'review',title:'暂时无法判断',reason:'任务尚未形成完整结果，不能据此决定是否上线。'};
       const s=runStats(run);
-      const regressions=run.results.filter(r=>comparisonFor(r).key==='regression').length;
-      if(s.fail) return {tone:'fail',title:'暂不建议上线',reason:run.comparisonMode==='draft-only'?`仍有 ${s.fail} 个客户问题处理有问题。本次没有运行参考智能体，只能判断草稿是否满足用例要求。`:(regressions?`仍有 ${s.fail} 个客户问题处理有问题，其中 ${regressions} 个属于参考智能体原本能处理、当前草稿没有处理好。`:`仍有 ${s.fail} 个客户问题处理有问题；参考智能体在这些用例上同样没有处理好，不属于本次改动引入的退化。`)};
+      if(s.fail) return {tone:'fail',title:'暂不建议上线',reason:`仍有 ${s.fail} 个客户问题处理有问题，修好并复测后再判断能否上线。`};
       if(s.review||s.error) return {tone:'review',title:'暂时无法判断',reason:`还有 ${s.review} 个结果需要人工查看、${s.error} 个测试没有完成，完成后再决定是否上线。`};
-      return {tone:'pass',title:'建议进入上线确认',reason:run.comparisonMode==='draft-only'?'当前草稿均满足用例预期，且没有待确认或未完成的测试；本次未判断相对生产参考是否有退化。':'当前草稿均满足用例预期，且没有新增退化、待确认或未完成的测试。'};
+      return {tone:'pass',title:'建议进入上线确认',reason:'当前草稿均满足用例预期，且没有待确认或未完成的测试。'};
     }
 
     function showToast(title,text,tone='success') {
@@ -1664,9 +1714,9 @@
       const filtered=state.testTab==='待确认'?tests.filter(t=>['draft','pending'].includes(t.status)):tests;
       const promptOf=c=>c.interactionPrompt||c.question||c.expectedAnswer||'尚未填写用户提示';
       const criteriaOf=c=>(c.criteria&&c.criteria.length)?c.criteria.join('；'):(c.expectedAnswer||'尚未填写成功标准');
-      return `<div class="page"><div class="page-head"><div class="page-head-copy"><h1>测试用例</h1></div><div class="page-actions"><button class="btn" data-action="new-case">${icon('plus',15)}创建场景用例</button>${eligibleTests().length?`<button class="btn primary" data-action="new-run">${icon('runs',15)}开始测试</button>`:''}</div></div>
+      return `<div class="page"><div class="page-head"><div class="page-head-copy"><h1>测试用例</h1></div><div class="page-actions"><button class="btn" data-action="new-case">${icon('plus',15)}新建用例</button>${eligibleTests().length?`<button class="btn primary" data-action="new-run">${icon('runs',15)}开始测试</button>`:''}</div></div>
         ${tests.length?`<div class="toolbar"><div class="tabs">${['全部','待确认'].map(tab=>`<button class="tab ${state.testTab===tab?'active':''}" data-action="test-tab" data-tab="${tab}">${tab}</button>`).join('')}</div><div class="toolbar-spacer"></div>${state.selectedTests.size?`<span class="section-meta">已选 ${state.selectedTests.size} 条</span><button class="btn soft small" data-action="new-run">运行所选</button>`:''}</div>
-        <div class="card table-card"><div class="table-scroll"><table class="case-table"><thead><tr><th class="col-check"></th><th class="col-name">场景用例</th><th>用户提示</th><th>成功标准</th><th class="col-time">最近编辑</th><th class="col-ops">操作</th></tr></thead><tbody>${filtered.map(c=>{const ready=c.status==='ready';return `<tr data-action="${ready?'open-test':'edit-case'}" data-id="${c.id}" tabindex="0"><td class="col-check"><input class="check" type="checkbox" ${state.selectedTests.has(c.id)?'checked':''} data-action="select-test" data-id="${c.id}" ${ready?'':'disabled'} aria-label="选择 ${esc(c.name)}"></td><td class="col-name"><div class="cell-main">${esc(c.name||'未命名测试用例')}</div><div class="cell-sub">${esc(c.id||'尚未编号')} · ${esc(statusLabels[c.status]||'草稿')}${c.baselineCase?' · 回归基线':''}</div></td><td><div class="cell-clamp">${esc(promptOf(c))}</div></td><td><div class="cell-clamp">${esc(criteriaOf(c))}</div></td><td class="col-time"><div class="cell-sub" style="margin-top:0">${esc(c.updated||'刚刚')}</div></td><td class="col-ops"><div class="row-actions"><button class="btn small" data-action="edit-case" data-id="${c.id}">${icon('edit',13)}编辑</button><button class="btn small" data-action="retest-case" data-id="${c.id}" ${ready?'':'disabled'}>${icon('refresh',13)}测试</button><button class="btn small danger" data-action="delete-case" data-id="${c.id}">${icon('trash',13)}删除</button></div></td></tr>`}).join('')||emptyRow(6,'当前分类没有用例')}</tbody></table></div></div>`:`<section class="card empty"><div><h2>先创建第一条场景用例</h2><p>可以从零编写，也可以从生产智能体的真实通话中提取场景草稿。</p><button class="btn primary" data-action="new-case">${icon('plus',14)}创建场景用例</button></div></section>`}
+        <div class="card table-card"><div class="table-scroll"><table class="case-table"><thead><tr><th class="col-check"></th><th class="col-name">场景用例</th><th>用户提示</th><th>成功标准</th><th class="col-time">最近编辑</th><th class="col-ops">操作</th></tr></thead><tbody>${filtered.map(c=>{const ready=c.status==='ready';return `<tr data-action="${ready?'open-test':'edit-case'}" data-id="${c.id}" tabindex="0"><td class="col-check"><input class="check" type="checkbox" ${state.selectedTests.has(c.id)?'checked':''} data-action="select-test" data-id="${c.id}" ${ready?'':'disabled'} aria-label="选择 ${esc(c.name)}"></td><td class="col-name"><div class="cell-main">${esc(c.name||'未命名测试用例')}</div><div class="cell-sub">${esc(c.id||'尚未编号')} · ${esc(statusLabels[c.status]||'草稿')}${c.baselineCase?' · 回归基线':''}</div></td><td><div class="cell-clamp">${esc(promptOf(c))}</div></td><td><div class="cell-clamp">${esc(criteriaOf(c))}</div></td><td class="col-time"><div class="cell-sub" style="margin-top:0">${esc(c.updated||'刚刚')}</div></td><td class="col-ops"><div class="row-actions"><button class="btn small" data-action="edit-case" data-id="${c.id}">${icon('edit',13)}编辑</button><button class="btn small" data-action="retest-case" data-id="${c.id}" ${ready?'':'disabled'}>${icon('refresh',13)}测试</button><button class="btn small danger" data-action="delete-case" data-id="${c.id}">${icon('trash',13)}删除</button></div></td></tr>`}).join('')||emptyRow(6,'当前分类没有用例')}</tbody></table></div></div>`:`<section class="card empty"><div><h2>先创建第一条场景用例</h2><p>可以从零编写，也可以从生产智能体的真实通话中提取场景草稿。</p><button class="btn primary" data-action="new-case">${icon('plus',14)}新建用例</button></div></section>`}
       </div>`;
     }
     function renderRuns() {
@@ -1705,9 +1755,9 @@
     }
     function renderRules() {
       const all=currentDB().rules;
-      const filtered=all.filter(r=>state.ruleTab==='全部规则'?true:state.ruleTab==='平台预置'||state.ruleTab==='业务创建'?state.ruleTab==='平台预置'?r.source==='平台预置':r.source!=='平台预置':r.type===state.ruleTab);
+      const filtered=all.filter(r=>state.ruleTab==='全部规则'?true:r.type===state.ruleTab);
       return `<div class="page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-action="online-view" data-view="issues">← 返回线上问题</button><h1 style="margin-top:9px">线上检查规则</h1></div><div class="page-actions"><button class="btn" data-action="open-discovery-settings">${icon('settings',15)}发现设置</button><button class="btn primary" data-action="new-rule">${icon('plus',15)}新建检查规则</button></div></div>
-      <div class="toolbar"><div class="tabs">${['全部规则','确定性问题','疑似性问题','平台预置','业务创建'].map(tab=>`<button class="tab ${state.ruleTab===tab?'active':''}" data-action="rule-tab" data-tab="${tab}">${tab}</button>`).join('')}</div></div>
+      <div class="toolbar"><div class="tabs">${['全部规则','确定性问题','疑似性问题'].map(tab=>`<button class="tab ${state.ruleTab===tab?'active':''}" data-action="rule-tab" data-tab="${tab}">${tab}</button>`).join('')}</div></div>
       <div class="card table-card"><div class="table-scroll"><table><thead><tr><th>规则名称</th><th>问题类型</th><th>什么时候检查 / 什么情况下命中</th><th>需要展示的证据</th><th>来源 / 版本</th><th>命中后的处理</th></tr></thead><tbody>${filtered.map(r=>`<tr data-action="edit-rule" data-id="${r.id}" tabindex="0"><td><div class="cell-main">${esc(r.name)}</div><div class="cell-sub">${r.id}</div></td><td>${badge(r.type,r.type==='确定性问题'?'fail':'review')}</td><td><div class="cell-main">${esc(r.when)}</div><div class="cell-sub">${esc(r.hit)}</div></td><td>${esc(r.evidence)}<div class="cell-sub">数据：${esc(r.data)}</div></td><td>${esc(r.source)}<div class="cell-sub">${esc(r.version)}</div></td><td>${r.type==='确定性问题'?badge('直接形成线上问题','fail'):badge('进入等待人工确认','review')}</td></tr>`).join('')||emptyRow(6,'当前筛选下没有规则')}</tbody></table></div></div></div>`;
     }
     function renderReport() {
@@ -1718,7 +1768,6 @@
       const toneClass=gate.tone==='pass'?'pass':gate.tone==='fail'?'fail':'review';
       const visible=run.results;
       const rerunCount=run.results.filter(r=>effectiveResult(r)!=='pass').length;
-      const hasReference=run.comparisonMode!=='draft-only';
       return `<div class="page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-nav="runs">← 返回测试任务</button><h1 style="margin-top:9px">${esc(run.name)}</h1></div><div class="page-actions">${run.problemId?`<button class="btn" data-action="open-problem" data-id="${run.problemId}">查看关联线上问题</button>`:''}<button class="btn" data-action="export-run" data-id="${run.id}">导出结果</button>${rerunCount?`<button class="btn" data-action="rerun-failed" data-id="${run.id}">${icon('refresh',15)}重新测试需处理用例</button>`:''}</div></div>
       <section class="verdict-bar ${toneClass}">
         <div class="verdict-icon">${icon(gate.tone==='pass'?'check':'issues',18)}</div>
@@ -1730,7 +1779,7 @@
           <div class="vm ${s.error?'review':'muted'}"><span>测试未完成</span><strong>${s.error}</strong></div>
         </div>
       </section>
-      <section class="card table-card" style="margin-top:14px"><div class="table-scroll"><table><thead><tr><th>测试用例</th><th>参考智能体</th><th>当前草稿</th><th>相对变化</th><th>人工状态</th><th>后续去向</th></tr></thead><tbody>${visible.map(r=>{const effective=effectiveResult(r),production=r.productionResult??r.baselineResult,comparison=comparisonFor(r);return `<tr data-action="open-result" data-id="${r.caseId}" data-result-id="${r.id}" tabindex="0"><td><div class="cell-main">${esc(r.caseName)}</div><div class="cell-sub">${r.caseId} · 多轮客户场景</div></td><td>${production?badge(businessResult(production),resultTone(production)):badge('本次未运行','info')}</td><td>${badge(businessResult(effective),resultTone(effective))}</td><td>${badge(comparison.label,comparison.tone)}</td><td>${badge(r.humanStatus,r.humanStatus==='等待确认'?'review':'pass')}</td><td>${r.issueId?`修改任务 ${r.issueId}`:effective==='error'?'检查测试系统并复测':effective==='fail'?'等待人工确认':'保留结果'}</td></tr>`}).join('')||emptyRow(6,'本次没有测试结果')}</tbody></table></div></section></div>`;
+      <section class="card table-card" style="margin-top:14px"><div class="table-scroll"><table><thead><tr><th>测试用例</th><th>当前草稿</th><th>人工状态</th><th>后续去向</th></tr></thead><tbody>${visible.map(r=>{const effective=effectiveResult(r);return `<tr data-action="open-result" data-id="${r.caseId}" data-result-id="${r.id}" tabindex="0"><td><div class="cell-main">${esc(r.caseName)}</div><div class="cell-sub">${r.caseId} · 多轮客户场景</div></td><td>${badge(businessResult(effective),resultTone(effective))}</td><td>${badge(r.humanStatus,r.humanStatus==='等待确认'?'review':'pass')}</td><td>${r.issueId?`修改任务 ${r.issueId}`:effective==='error'?'检查测试系统并复测':effective==='fail'?'等待人工确认':'保留结果'}</td></tr>`}).join('')||emptyRow(4,'本次没有测试结果')}</tbody></table></div></section></div>`;
     }
 
     function renderVariableRows() {
@@ -1769,7 +1818,8 @@
       if(!editing&&f.creationMode==='agent-import') {
         const source=tenantAgentCaseSources.find(agent=>agent.id===f.otherAgentId)||tenantAgentCaseSources[0];
         const selected=f.otherAgentCaseIds||[];
-        return `<div class="page editor-page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-action="back-to-case-source">← 重新选择创建方式</button><h1 style="margin-top:9px">从其他智能体导入</h1><p class="page-sub">选择租户内的智能体，再选择要复用的已有测试用例。</p></div><div class="page-actions">${badge(`${source.status} · ${source.version}`,'accent')}${badge(`已选 ${selected.length} 条`,selected.length?'success':'review')}</div></div><div class="editor-layout"><div class="editor-main"><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('agents',16)}</div><div class="editor-section-copy"><h2>选择用例来源</h2><p>这里只读取其他智能体已经维护的测试用例，不读取它的生产通话。</p></div></div><div class="editor-section-body"><div class="field" style="max-width:520px"><label>租户内的智能体</label><select class="select" data-case-field="otherAgentId">${tenantAgentCaseSources.map(agent=>`<option value="${agent.id}" ${source.id===agent.id?'selected':''}>${esc(agent.name)} · ${agent.version} · ${agent.status}</option>`).join('')}</select></div></div></section><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('tests',16)}</div><div class="editor-section-copy"><h2>选择测试用例</h2><p>导入的是一份独立副本，后续修改不会影响来源智能体。</p></div></div><div class="editor-section-body"><div class="tool-stack">${source.cases.map((item,index)=>{const caseId=`${source.id}-${index}`,checked=selected.includes(caseId);return `<label class="check-item"><input class="check" type="checkbox" data-action="toggle-agent-case" data-id="${caseId}" ${checked?'checked':''}><span class="check-copy"><strong>${esc(item.name)}</strong><span>${esc(item.prompt)}</span></span></label>`;}).join('')}</div></div></section><div class="editor-savebar"><button class="btn ghost" data-action="back-to-case-source">取消</button><span class="spacer"></span><button class="btn primary" data-action="import-agent-cases" ${selected.length?'':'disabled'}>导入 ${selected.length} 条用例</button></div></div><aside class="editor-aside"><section class="card aside-card"><div class="aside-title">来源智能体</div><div class="gate-line"><span>智能体</span><strong>${esc(source.name)}</strong></div><div class="gate-line"><span>版本</span><strong>${esc(source.version)}</strong></div><div class="gate-line"><span>已有用例</span><strong>${source.cases.length} 条</strong></div></section><div class="notice success"><span>${icon('shield',16)}</span><div><strong>导入的是副本</strong><p>导入后可以针对当前智能体单独修改，并需重新确认。</p></div></div></aside></div></div>`;
+        const allSelected=source.cases.length>0&&selected.length===source.cases.length;
+        return `<div class="page editor-page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-action="back-to-case-source">← 重新选择创建方式</button><h1 style="margin-top:9px">从其他智能体导入</h1><p class="page-sub">选择租户内的智能体，再选择要复用的已有测试用例。</p></div><div class="page-actions">${badge(`${source.status} · ${source.version}`,'accent')}${badge(`已选 ${selected.length} 条`,selected.length?'success':'review')}</div></div><div class="editor-layout no-aside"><div class="editor-main"><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('agents',16)}</div><div class="editor-section-copy"><h2>选择用例来源</h2><p>这里只读取其他智能体已经维护的测试用例，不读取它的生产通话。</p></div></div><div class="editor-section-body"><div class="field" style="max-width:520px"><label>租户内的智能体</label><select class="select" data-case-field="otherAgentId">${tenantAgentCaseSources.map(agent=>`<option value="${agent.id}" ${source.id===agent.id?'selected':''}>${esc(agent.name)} · ${agent.version} · ${agent.status}</option>`).join('')}</select></div></div></section><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('tests',16)}</div><div class="editor-section-copy"><h2>选择测试用例</h2><p>导入的是一份独立副本，后续修改不会影响来源智能体。</p></div><label style="margin-left:auto;flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)"><input class="check" type="checkbox" data-action="toggle-all-agent-cases" ${allSelected?'checked':''} ${source.cases.length?'':'disabled'}>全选</label></div><div class="editor-section-body"><div class="tool-stack">${source.cases.map((item,index)=>{const caseId=`${source.id}-${index}`,checked=selected.includes(caseId);return `<label class="check-item"><input class="check" type="checkbox" data-action="toggle-agent-case" data-id="${caseId}" ${checked?'checked':''}><span class="check-copy"><strong>${esc(item.name)}</strong><span>${esc(item.prompt)}</span></span></label>`;}).join('')}</div></div></section><div class="editor-savebar"><button class="btn ghost" data-action="back-to-case-source">取消</button><span class="spacer"></span><button class="btn primary" data-action="import-agent-cases" ${selected.length?'':'disabled'}>导入 ${selected.length} 条用例</button></div></div></div></div>`;
       }
 
       if(!editing&&f.creationMode==='ai-generate') {
@@ -1781,10 +1831,9 @@
         const source=productionSourceAgents.find(agent=>agent.id===f.sourceAgentId)||productionSourceAgents[0];
         const count=Math.max(1,Math.min(20,Number(f.historyCount)||5));
         return `<div class="page editor-page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-action="back-to-case-source">← 重新选择创建方式</button><h1 style="margin-top:9px">从生产通话提取用例</h1><p class="page-sub">选择通话来源和范围，由系统生成用例草稿；生成后逐条核对，不直接进入正式测试。</p></div><div class="page-actions">${badge('生产通话 · 只读提取','success')}${badge(`预计生成 ${count} 条草稿`,'review')}</div></div>
-        <div class="editor-layout"><div class="editor-main"><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('discover',16)}</div><div class="editor-section-copy"><h2>告诉系统从哪些通话中提取</h2><p>可用一句业务化的要求缩小范围，也可以只使用下面的筛选条件。</p></div></div><div class="editor-section-body"><div class="field full"><label>想提取什么场景（可选）</label><textarea class="textarea" style="min-height:110px" data-case-field="historyInstruction" placeholder="例如：从最近客户明确要求人工、预约失败或反复追问的问题中，提取能够重复测试的客户场景">${esc(f.historyInstruction||'从最近未解决、转人工或系统操作异常的通话中，提取有代表性的客户场景')}</textarea></div><div class="form-grid" style="margin-top:14px"><div class="field"><label>生产智能体 *</label><select class="select" data-case-field="sourceAgentId">${productionSourceAgents.map(agent=>`<option value="${agent.id}" ${source.id===agent.id?'selected':''}>${esc(agent.name)} · ${agent.version}</option>`).join('')}</select><span class="hint">只读取所选生产智能体的通话历史，不会运行该智能体。</span></div><div class="field"><label>通话时间范围</label><select class="select" data-case-field="historyRange">${['最近 7 天','最近 30 天','最近 90 天'].map(x=>`<option ${f.historyRange===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>优先查看哪些通话</label><select class="select" data-case-field="historyScope">${['有明确问题或未解决的通话','发生系统操作的通话','客户要求转人工的通话','全部通话'].map(x=>`<option ${f.historyScope===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>生成多少条场景草稿</label><input class="input" type="number" min="1" max="20" data-case-field="historyCount" value="${count}"><span class="hint">系统会合并高度相似的通话，不按每通对话机械生成一条。</span></div></div></div></section>
-        <section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('spark',16)}</div><div class="editor-section-copy"><h2>每条草稿会提取什么</h2><p>抽取的是可重复发生的客户场景，不是旧通话的固定剧本。</p></div></div><div class="editor-section-body"><div class="grid cols-2"><div class="card card-pad"><strong>模拟客户说明</strong><p class="page-sub">客户是谁、想办什么、已经知道什么、愿意提供什么，以及会如何根据回复继续交流。</p></div><div class="card card-pad"><strong>处理正确与禁止事项</strong><p class="page-sub">最终要完成什么、必须发生哪些动作，以及哪些结果明确不能接受。</p></div><div class="card card-pad"><strong>变量与模拟系统结果</strong><p class="page-sub">脱敏后的车型、时间、号码等测试数据，以及成功、失败或超时的系统返回。</p></div><div class="card card-pad"><strong>来源证据</strong><p class="page-sub">保留来源智能体、通话范围和代表性证据，方便回到原始通话复核。</p></div></div></div></section>
+        <div class="editor-layout"><div class="editor-main"><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('discover',16)}</div><div class="editor-section-copy"><h2>告诉系统从哪些通话中提取</h2><p>可用一句业务化的要求缩小范围，也可以只使用下面的筛选条件。</p></div></div><div class="editor-section-body"><div class="field full"><label>想提取什么场景（可选）</label><textarea class="textarea" style="min-height:110px" data-case-field="historyInstruction" placeholder="例如：从最近客户明确要求人工、预约失败或反复追问的问题中，提取能够重复测试的客户场景">${esc(f.historyInstruction||'从最近未解决、转人工或系统操作异常的通话中，提取有代表性的客户场景')}</textarea></div><div class="form-grid" style="margin-top:14px"><div class="field"><label>生产智能体 *</label><select class="select" data-case-field="sourceAgentId">${productionSourceAgents.map(agent=>`<option value="${agent.id}" ${source.id===agent.id?'selected':''}>${esc(agent.name)} · ${agent.version}</option>`).join('')}</select><span class="hint">只读取所选生产智能体的通话历史，不会运行该智能体。</span></div><div class="field"><label>通话时间范围</label><select class="select" data-case-field="historyRange">${['最近 7 天','最近 30 天','最近 90 天'].map(x=>`<option ${f.historyRange===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>生成多少条场景草稿</label><input class="input" type="number" min="1" max="20" data-case-field="historyCount" value="${count}"><span class="hint">系统会合并高度相似的通话，不按每通对话机械生成一条。</span></div></div></div></section>
         <div class="editor-savebar"><button class="btn ghost" data-action="back-to-case-source">取消</button><span class="spacer"></span><button class="btn primary" data-action="generate-history-cases">${icon('spark',14)}生成 ${count} 条场景草稿</button></div></div>
-        <aside class="editor-aside"><section class="card aside-card"><div class="aside-title">通话来源</div><div class="gate-line"><span>生产智能体</span><strong>${esc(source.name)}</strong></div><div class="gate-line"><span>生产版本</span><strong>${esc(source.version)}</strong></div><div class="gate-line"><span>已有通话</span><strong>${esc(source.calls)} 通</strong></div><div class="gate-line"><span>数据更新</span><strong>${esc(source.lastSync)}</strong></div><p class="page-sub" style="margin-top:10px">${esc(source.description)}</p></section><label class="check-item"><input class="check" type="checkbox" data-case-field="historyPrivacyConfirmed" ${f.historyPrivacyConfirmed?'checked':''}><span class="check-copy"><strong>已确认脱敏和使用范围</strong><span>姓名、手机号、证件号等真实信息会替换为测试数据；生成内容只用于当前智能体测试。</span></span></label><div class="notice warn"><span>${icon('shield',16)}</span><div><strong>生成结果只是草稿</strong><p>AI 可能误解通话背景，必须由业务人员逐条确认模拟客户说明和判断条件。</p></div></div></aside></div></div>`;
+        <aside class="editor-aside"><section class="card aside-card"><div class="aside-title">通话来源</div><div class="gate-line"><span>生产智能体</span><strong>${esc(source.name)}</strong></div><div class="gate-line"><span>生产版本</span><strong>${esc(source.version)}</strong></div><div class="gate-line"><span>已有通话</span><strong>${esc(source.calls)} 通</strong></div><div class="gate-line"><span>数据更新</span><strong>${esc(source.lastSync)}</strong></div><p class="page-sub" style="margin-top:10px">${esc(source.description)}</p></section></aside></div></div>`;
       }
 
       return `<div class="page editor-page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-action="leave-editor">← ${f.originProblemId?'返回线上问题':'返回测试用例'}</button><h1 style="margin-top:9px">${f.originProblemId?'根据线上问题创建用例':`${editing?'编辑':'新建'}用例`}</h1><p class="page-sub">${f.originProblemId?'系统已经根据代表性通话预填客户场景和判断条件，请核对后保存。':'用一段完整提示词模拟客户，允许对话根据智能体回复自然分支；最终按业务结果和禁止事项判断。'}</p></div><div class="page-actions">${!editing&&!f.originProblemId?`<button class="btn small" data-action="fill-case-demo">填入示例</button>`:''}${badge(state.caseDirty?'有未保存修改':statusLabels[f.status],state.caseDirty?'review':'')}</div></div>
@@ -1798,7 +1847,7 @@
     }
 
     function drawerShell(title,sub,body,foot='',wide=false) {
-      return `<div class="overlay"><aside class="drawer ${wide?'wide':''}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="drawer-head"><div class="drawer-title"><h2>${esc(title)}</h2><p>${esc(sub)}</p></div><button class="icon-btn drawer-close" data-action="close-overlay" aria-label="关闭">${icon('close',16)}</button></div><div class="drawer-body">${body}</div>${foot?`<div class="drawer-foot">${foot}</div>`:''}</aside></div>`;
+      return `<div class="overlay"><aside class="drawer ${wide?'wide':''}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="drawer-head"><div class="drawer-title"><h2>${esc(title)}</h2>${sub?`<p>${esc(sub)}</p>`:''}</div><button class="icon-btn drawer-close" data-action="close-overlay" aria-label="关闭">${icon('close',16)}</button></div><div class="drawer-body">${body}</div>${foot?`<div class="drawer-foot">${foot}</div>`:''}</aside></div>`;
     }
 
     function renderTranscript(result,version='draft') {
@@ -1837,7 +1886,7 @@
     function renderTestDrawer(id) {
       const c=getCase(id);if(!c) return '';
       const found=resultForOverlay(id),result=found?.result||null,run=found?.run||null,effective=result?effectiveResult(result):'none';
-      const body=`<div class="split-detail"><div><div style="display:flex;gap:7px;margin-bottom:14px">${badge('多轮客户场景','accent')}${badge(statusLabels[c.status],resultTone(c.status))}</div><h3>模拟客户说明</h3><div class="card card-pad" style="margin-bottom:14px"><p>${esc(c.interactionPrompt||'尚未填写客户模拟提示词')}</p>${c.historySource?`<div class="snapshot-note">来源：${esc(c.historySource.agentName)} · ${esc(c.historySource.version)} · ${esc(c.historySource.range)}。历史通话只用于抽取场景，不按原轮次重放。</div>`:''}</div>${run?`<div class="notice ${comparisonFor(result).tone==='pass'?'success':comparisonFor(result).tone==='fail'?'warn':''}" style="margin-bottom:14px"><span>${icon('compare',16)}</span><div><strong>${result.productionResult?'参考对比':'结果说明'}：${comparisonFor(result).label}</strong><p>${result.productionResult?'参考智能体和当前草稿分别按同一份用例要求判断，再计算相对变化。':'本次未运行参考智能体，只判断当前草稿是否满足用例要求。'}</p></div></div><div class="grid ${result.productionResult?'cols-2':''}">${result.productionResult?renderVersionEvidence(result,'production',run.baseline):''}${renderVersionEvidence(result,'draft',run.version)}</div><div class="snapshot-note">结果来自 ${run.id}；${result.productionResult?'参考与草稿的判断、对话和逐项证据':'当前草稿的判断、对话和逐项证据'}均已保存，后续修改用例不会改写历史。</div>`:'<h3>用例尚未测试</h3>'}</div><aside class="review-panel"><div class="section-head"><div><div class="section-title">草稿人工确认</div><div class="section-meta">${result?.productionResult?'人工结论只针对草稿；参考结果独立保留':'本次只确认当前草稿结果'}</div></div>${badge(businessResult(effective),resultTone(effective))}</div>${result?result.checks.map(check=>`<div class="review-item"><div class="review-item-top"><div class="review-item-title">${esc(check.text)}</div>${badge(check.status==='pass'?'处理正确':check.status==='fail'?'处理有问题':check.status==='error'?'未检查':'需要人工看',resultTone(check.status))}</div></div>`).join(''):'<div class="review-item">还没有逐项结果，请先测试。</div>'}
+      const body=`<div class="split-detail"><div><div style="display:flex;gap:7px;margin-bottom:14px">${badge('多轮客户场景','accent')}${badge(statusLabels[c.status],resultTone(c.status))}</div><h3>模拟客户说明</h3><div class="card card-pad" style="margin-bottom:14px"><p>${esc(c.interactionPrompt||'尚未填写客户模拟提示词')}</p>${c.historySource?`<div class="snapshot-note">来源：${esc(c.historySource.agentName)} · ${esc(c.historySource.version)} · ${esc(c.historySource.range)}。历史通话只用于抽取场景，不按原轮次重放。</div>`:''}</div>${run?`<div class="grid">${renderVersionEvidence(result,'draft',run.version)}</div><div class="snapshot-note">结果来自 ${run.id}；${result.productionResult?'参考与草稿的判断、对话和逐项证据':'当前草稿的判断、对话和逐项证据'}均已保存，后续修改用例不会改写历史。</div>`:'<h3>用例尚未测试</h3>'}</div><aside class="review-panel"><div class="section-head"><div><div class="section-title">草稿人工确认</div><div class="section-meta">${result?.productionResult?'人工结论只针对草稿；参考结果独立保留':'本次只确认当前草稿结果'}</div></div>${badge(businessResult(effective),resultTone(effective))}</div>${result?result.checks.map(check=>`<div class="review-item"><div class="review-item-top"><div class="review-item-title">${esc(check.text)}</div>${badge(check.status==='pass'?'处理正确':check.status==='fail'?'处理有问题':check.status==='error'?'未检查':'需要人工看',resultTone(check.status))}</div></div>`).join(''):'<div class="review-item">还没有逐项结果，请先测试。</div>'}
       ${result?`<div class="review-item"><label class="field"><span>人工结论</span><select class="select" data-review-field="conclusion"><option value="">选择结论</option><option value="agent-issue" ${state.reviewForm.conclusion==='agent-issue'?'selected':''}>确认智能体处理有问题</option><option value="acceptable" ${state.reviewForm.conclusion==='acceptable'?'selected':''}>当前处理可以接受</option><option value="case-issue" ${state.reviewForm.conclusion==='case-issue'?'selected':''}>需要修改测试要求</option><option value="test-error" ${state.reviewForm.conclusion==='test-error'?'selected':''}>测试没有完成</option></select></label><label class="field" style="margin-top:10px"><span>判断依据 *</span><textarea class="textarea" data-review-field="reason" placeholder="保存后会影响后续动作和上线判断">${esc(state.reviewForm.reason||'')}</textarea></label></div>${result.issueId?`<div class="review-item"><strong>已关联修改任务 ${result.issueId}</strong><button class="btn small" style="margin-top:8px" data-action="open-problem" data-id="${result.issueId}">查看修改任务</button></div>`:''}`:''}</aside></div>`;
       const canRetest=c.status==='ready';
       const foot=`<button class="btn ghost" data-action="edit-case" data-id="${c.id}">编辑用例</button>${result?`<button class="btn ghost" data-action="retest-case" data-id="${c.id}" ${canRetest?'':'disabled'}>重新测试这个问题</button>`:''}<span class="spacer"></span>${result?`<button class="btn primary" data-action="save-review" data-id="${c.id}">保存人工结论</button>`:`<button class="btn primary" data-action="retest-case" data-id="${c.id}" ${canRetest?'':'disabled'}>开始测试这个问题</button>`}`;
@@ -1891,9 +1940,9 @@
     function renderRuleDrawer() {
       const f=state.ruleForm;if(!f) return '';
       const direct=f.type==='确定性问题';
-      const body=`<div class="notice ${direct?'warn':''}" style="margin-bottom:14px"><span>${icon(direct?'issues':'spark',16)}</span><div><strong>${direct?'命中后直接形成线上问题':'命中后必须进入人工确认'}</strong><p>${direct?'只有适用条件、违反条件和判断证据都足够可靠时，才能选择确定性问题。':'疑似性规则只输出异常现象和证据，不能直接判定智能体处理有问题。'}</p></div></div><div class="form-grid"><div class="field full"><label>规则名称 *</label><input class="input" data-rule-field="name" value="${esc(f.name)}"></div><div class="field"><label>问题类型 *</label><select class="select" data-rule-field="type"><option ${direct?'selected':''}>确定性问题</option><option ${!direct?'selected':''}>疑似性问题</option></select><span class="hint">类型决定处理路径，不只是展示标签。</span></div><div class="field"><label>规则来源</label><select class="select" data-rule-field="source">${['平台预置','业务人员创建','线上问题沉淀','系统自动生成'].map(x=>`<option ${f.source===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>规则版本</label><input class="input" data-rule-field="version" value="${esc(f.version)}"></div><div class="field"><label>问题影响</label><select class="select" data-rule-field="impact">${['普通','重要','上线前必须解决'].map(x=>`<option ${f.impact===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field full"><label>什么时候检查 *</label><textarea class="textarea" data-rule-field="when" placeholder="明确适用条件和检查时机">${esc(f.when)}</textarea></div><div class="field full"><label>检查哪些数据 *</label><textarea class="textarea" data-rule-field="data" placeholder="真实会话、系统操作、业务结果或客户反馈">${esc(f.data)}</textarea></div><div class="field full"><label>什么情况下命中 *</label><textarea class="textarea" data-rule-field="hit" placeholder="确定性规则必须能直接判错；疑似性规则只描述异常现象">${esc(f.hit)}</textarea></div><div class="field full"><label>需要展示什么证据 *</label><textarea class="textarea" data-rule-field="evidence" placeholder="代表对话、操作回执、影响数量和判断依据">${esc(f.evidence)}</textarea></div></div><div class="snapshot-note">是否需要人工确认由问题类型自动决定；规则来源单独记录。修改或升级产生新版本，不改写历史命中结果。</div>`;
+      const body=`<div class="form-grid"><div class="field full"><label>规则名称 *</label><input class="input" data-rule-field="name" value="${esc(f.name)}"></div><div class="field"><label>问题类型 *</label><select class="select" data-rule-field="type"><option ${direct?'selected':''}>确定性问题</option><option ${!direct?'selected':''}>疑似性问题</option></select></div><div class="field full"><label>什么时候检查 *</label><textarea class="textarea" data-rule-field="when" placeholder="明确适用条件和检查时机">${esc(f.when)}</textarea></div><div class="field full"><label>检查哪些数据 *</label><textarea class="textarea" data-rule-field="data" placeholder="真实会话、系统操作、业务结果或客户反馈">${esc(f.data)}</textarea></div><div class="field full"><label>什么情况下命中 *</label><textarea class="textarea" data-rule-field="hit" placeholder="确定性规则必须能直接判错；疑似性规则只描述异常现象">${esc(f.hit)}</textarea></div><div class="field full"><label>需要展示什么证据 *</label><textarea class="textarea" data-rule-field="evidence" placeholder="代表对话、操作回执、影响数量和判断依据">${esc(f.evidence)}</textarea></div></div><div class="snapshot-note">是否需要人工确认由问题类型自动决定；修改规则不改写历史命中结果。</div>`;
       const upgrade=!direct&&f.id?`<button class="btn" data-action="upgrade-rule">升级为确定性问题</button>`:'';
-      return drawerShell(f.id?'编辑线上检查规则':'新建线上检查规则',`${direct?'确定性命中 → 直接形成问题':'疑似性命中 → 等待人工确认'} · ${f.version}`,body,`<button class="btn" data-action="close-overlay">取消</button>${upgrade}<span class="spacer"></span><button class="btn primary" data-action="save-rule">保存规则</button>`);
+      return drawerShell(f.id?'编辑线上检查规则':'新建线上检查规则',``,body,`<button class="btn" data-action="close-overlay">取消</button>${upgrade}<span class="spacer"></span><button class="btn primary" data-action="save-rule">保存规则</button>`);
     }
 
     function runScopeCount(scope) {
@@ -1901,43 +1950,27 @@
       return eligibleTests().length;
     }
 
-    function referenceAgentFor(agentId=state.agentId) {
-      const list=referenceAgents[agentId]||[];
-      return list.find(item=>item.id===state.runForm.referenceAgentId)||list[0]||null;
-    }
 
-    function compareModeLabel(mode) {
-      return ({'draft-only':'只测试当前草稿','saved-reference':'复用参考结果','reference-agent':'重新运行参考智能体'})[mode]||'只测试当前草稿';
-    }
 
-    function baselineForMode(mode,agent=currentAgent()) {
-      const reference=referenceAgentFor(agent.id);
-      if(mode==='saved-reference'&&reference) return `${reference.name} · ${reference.version} · 已保存结果`;
-      if(mode==='reference-agent'&&reference) return `${reference.name} · ${reference.version} · 调试接口`;
-      return '未运行参考智能体';
-    }
 
     function renderRunModal() {
       const agent=currentAgent(),scope=state.runForm.scope,total=runScopeCount(scope);
       const selectedCases=eligibleTests().filter(c=>scope==='selected'?state.selectedTests.has(c.id):true);
       const sandbox=selectedCases.some(c=>c.tools.some(t=>t.mode==='sandbox'));
       const choices=[['selected','当前选中的用例','只测试列表中已勾选且已确认的用例',runScopeCount('selected')],['all','全部可测试用例','不包括草稿和待确认用例',runScopeCount('all')]];
-      const mode=state.runForm.compareMode||'draft-only',reference=referenceAgentFor(agent.id);
-      const referencePanel=mode==='draft-only'?'':
-        `<div class="field full"><div class="card card-pad"><div class="section-head"><div><div class="section-title">生产参考智能体</div><div class="section-meta">它是独立 Dify 智能体，不是同一智能体的线上版本运行态</div></div>${badge(reference?.status||'尚未配置',reference?'success':'review')}</div><div class="grid cols-2" style="margin-top:12px"><div class="gate-line"><span>参考对象</span><strong>${esc(reference?.name||'未选择')}</strong></div><div class="gate-line"><span>代表版本</span><strong>${esc(reference?.version||'—')}</strong></div><div class="gate-line"><span>配置来源</span><strong>${esc(reference?.source||'—')}</strong></div><div class="gate-line"><span>最近核对</span><strong>${esc(reference?.checkedAt||'—')}</strong></div></div>${mode==='saved-reference'?'<div class="snapshot-note">只有用例、检查条件、变量、模拟系统结果和参考智能体配置都没有变化时，才能复用这些结果。</div>':`<label class="check-item" style="margin-top:12px"><input class="check" type="checkbox" data-run-field="referenceConfirmed" ${state.runForm.referenceConfirmed?'checked':''}><span class="check-copy"><strong>已确认参考智能体当前草稿与生产配置一致，并且不会继续编辑</strong><span>低版本 Dify 的调试接口运行当前草稿；仅仅“已经发布”不能证明调试内容仍与生产一致。</span></span></label><div class="notice warn" style="margin-top:12px"><span>${icon('shield',16)}</span><div><strong>本次会产生参考智能体的调试记录和模型费用</strong><p>它不是一通真实客户会话；所有写操作仍必须使用模拟结果或测试系统。</p></div></div>`}</div></div>`;
-      const canStart=total&&(!sandbox||state.runForm.sandboxConfirmed)&&(mode!=='reference-agent'||state.runForm.referenceConfirmed);
-      const body=`<div class="form-grid"><div class="field full"><label>任务名称</label><input class="input" data-run-field="name" value="${esc(state.runForm.name)}"></div><div class="field"><label>被测智能体</label><input class="input" value="${agent.name} · 测试副本" readonly></div><div class="field"><label>被测版本</label><input class="input" value="${agent.draftVersion} · 当前草稿 · 调试接口" readonly></div>${referencePanel}<div class="field full"><label>选择哪些客户问题</label><div class="choice-grid">${choices.map(([key,label,desc,count])=>`<button class="choice ${scope===key?'selected':''}" data-action="run-scope" data-scope="${key}" ${count?'':'disabled'}><div class="choice-icon">${count}</div><strong>${label}</strong><p>${desc}</p></button>`).join('')}</div>${!total?'<div class="field-error">当前范围没有可测试用例，请先确认用例或选择其他范围。</div>':''}</div>${sandbox?`<div class="field full"><label class="check-item"><input class="check" type="checkbox" data-run-field="sandboxConfirmed" ${state.runForm.sandboxConfirmed?'checked':''}><span class="check-copy"><strong>已确认测试账号和权限</strong><span>只连接专门测试系统，不连接正在服务真实客户的系统。</span></span></label></div>`:''}</div>`;
-      return `<div class="overlay"><div class="modal-wrap"><section class="modal" role="dialog" aria-modal="true"><div class="drawer-head"><div class="drawer-title"><h2>新建测试任务</h2><p>${agent.name} · ${compareModeLabel(mode)} · 预计测试 ${total} 个客户问题</p></div><button class="icon-btn" data-action="close-overlay">${icon('close',16)}</button></div><div class="drawer-body">${body}</div><div class="drawer-foot"><button class="btn" data-action="close-overlay">取消</button><span class="spacer"></span><button class="btn primary" data-action="start-run" ${canStart?'':'disabled'}>开始测试</button></div></section></div></div>`;
+      const canStart=total&&(!sandbox||state.runForm.sandboxConfirmed);
+      const body=`<div class="form-grid"><div class="field full"><label>任务名称</label><input class="input" data-run-field="name" value="${esc(state.runForm.name)}"></div><div class="field"><label>被测智能体</label><input class="input" value="${agent.name} · 测试副本" readonly></div><div class="field"><label>被测版本</label><input class="input" value="${agent.draftVersion} · 当前草稿 · 调试接口" readonly></div><div class="field full"><label>选择哪些客户问题</label><div class="choice-grid">${choices.map(([key,label,desc,count])=>`<button class="choice ${scope===key?'selected':''}" data-action="run-scope" data-scope="${key}" ${count?'':'disabled'}><div class="choice-icon">${count}</div><strong>${label}</strong><p>${desc}</p></button>`).join('')}</div>${!total?'<div class="field-error">当前范围没有可测试用例，请先确认用例或选择其他范围。</div>':''}</div>${sandbox?`<div class="field full"><label class="check-item"><input class="check" type="checkbox" data-run-field="sandboxConfirmed" ${state.runForm.sandboxConfirmed?'checked':''}><span class="check-copy"><strong>已确认测试账号和权限</strong><span>只连接专门测试系统，不连接正在服务真实客户的系统。</span></span></label></div>`:''}</div>`;
+      return `<div class="overlay"><div class="modal-wrap"><section class="modal" role="dialog" aria-modal="true"><div class="drawer-head"><div class="drawer-title"><h2>新建测试任务</h2><p>${agent.name} · 只测试当前草稿 · 预计测试 ${total} 个客户问题</p></div><button class="icon-btn" data-action="close-overlay">${icon('close',16)}</button></div><div class="drawer-body">${body}</div><div class="drawer-foot"><button class="btn" data-action="close-overlay">取消</button><span class="spacer"></span><button class="btn primary" data-action="start-run" ${canStart?'':'disabled'}>开始测试</button></div></section></div></div>`;
     }
 
     function renderRunProgress() {
       const job=state.activeJob,total=job?.total||1,done=Math.min(total,Math.floor(total*state.runProgress/100));
-      return `<div class="overlay"><div class="modal-wrap"><section class="modal" role="dialog" aria-modal="true"><div class="run-progress"><div class="run-orbit"></div><h2>${state.runProgress<100?`正在测试 ${total} 个客户问题`:'正在整理测试结果'}</h2><p class="page-sub">${esc(job?.label||'测试任务')} · ${compareModeLabel(job?.comparisonMode||'draft-only')} · 已完成 ${done} / ${total} 条用例</p><div class="progress" style="margin-top:18px"><span style="width:${state.runProgress}%"></span></div><div class="run-stats"><div class="run-stat"><strong>${done}</strong><span>已完成</span></div><div class="run-stat"><strong>${Math.max(0,total-done)}</strong><span>等待执行</span></div></div><button class="btn ghost" style="margin-top:18px" data-action="cancel-run">取消并保留已完成结果</button><p class="snapshot-note">测试进行中按 Escape 不会隐藏任务；请先取消或等待完成。</p></div></section></div></div>`;
+      return `<div class="overlay"><div class="modal-wrap"><section class="modal" role="dialog" aria-modal="true"><div class="run-progress"><div class="run-orbit"></div><h2>${state.runProgress<100?`正在测试 ${total} 个客户问题`:'正在整理测试结果'}</h2><p class="page-sub">${esc(job?.label||'测试任务')} · 已完成 ${done} / ${total} 条用例</p><div class="progress" style="margin-top:18px"><span style="width:${state.runProgress}%"></span></div><div class="run-stats"><div class="run-stat"><strong>${done}</strong><span>已完成</span></div><div class="run-stat"><strong>${Math.max(0,total-done)}</strong><span>等待执行</span></div></div><button class="btn ghost" style="margin-top:18px" data-action="cancel-run">取消并保留已完成结果</button><p class="snapshot-note">测试进行中按 Escape 不会隐藏任务；请先取消或等待完成。</p></div></section></div></div>`;
     }
 
     function renderDiscoverySettingsDrawer() {
       const settings=currentDB().discoverySettings;
-      const body=`<div class="notice" style="margin-bottom:14px"><span>${icon('settings',16)}</span><div><strong>这里只配置平台发现方法，不逐条维护信号资产</strong><p>具体异常方法已经作为疑似性规则统一沉淀在“线上检查规则”中；本页只控制全局检查范围、提醒数量和发现类别。</p></div></div><div class="form-grid"><div class="field"><label>检查最近多长时间</label><select class="select" data-discovery-setting="range">${['最近 24 小时','最近 72 小时','最近 7 天'].map(x=>`<option ${settings.range===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>至少出现多少通才提醒</label><input class="input" type="number" min="1" data-discovery-setting="minSessions" value="${settings.minSessions}"></div><div class="field full"><label class="check-item"><input class="check" type="checkbox" data-discovery-setting="conversationAnomalies" ${settings.conversationAnomalies?'checked':''}><span class="check-copy"><strong>检查单通对话异常</strong><span>重复提问、对话循环、异常过长、突然结束等。</span></span></label></div><div class="field full"><label class="check-item"><input class="check" type="checkbox" data-discovery-setting="trendChanges" ${settings.trendChanges?'checked':''}><span class="check-copy"><strong>检查多通对话和趋势变化</strong><span>投诉聚集、重复联系、转人工或系统失败率异常变化。</span></span></label></div><div class="field full"><label class="check-item"><input class="check" type="checkbox" data-discovery-setting="openInspection" ${settings.openInspection?'checked':''}><span class="check-copy"><strong>启用开放式模型巡检</strong><span>只输出代表对话、异常表现、影响数量、判断依据和缺失证据。</span></span></label></div><div class="field full"><label>哪些业务或对话不检查</label><textarea class="textarea" data-discovery-setting="exclusions">${esc(settings.exclusions)}</textarea></div></div>`;
+      const body=`<div class="form-grid"><div class="field"><label>检查最近多长时间</label><select class="select" data-discovery-setting="range">${['最近 24 小时','最近 72 小时','最近 7 天'].map(x=>`<option ${settings.range===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>至少出现多少通才提醒</label><input class="input" type="number" min="1" data-discovery-setting="minSessions" value="${settings.minSessions}"></div><div class="field full"><label class="check-item"><input class="check" type="checkbox" data-discovery-setting="conversationAnomalies" ${settings.conversationAnomalies?'checked':''}><span class="check-copy"><strong>检查单通对话异常</strong><span>重复提问、对话循环、异常过长、突然结束等。</span></span></label></div><div class="field full"><label class="check-item"><input class="check" type="checkbox" data-discovery-setting="trendChanges" ${settings.trendChanges?'checked':''}><span class="check-copy"><strong>检查多通对话和趋势变化</strong><span>投诉聚集、重复联系、转人工或系统失败率异常变化。</span></span></label></div><div class="field full"><label class="check-item"><input class="check" type="checkbox" data-discovery-setting="openInspection" ${settings.openInspection?'checked':''}><span class="check-copy"><strong>启用开放式模型巡检</strong><span>只输出代表对话、异常表现、影响数量、判断依据和缺失证据。</span></span></label></div><div class="field full"><label>哪些业务或对话不检查</label><textarea class="textarea" data-discovery-setting="exclusions">${esc(settings.exclusions)}</textarea></div></div>`;
       return drawerShell('发现设置','平台内置异常发现方法的全局配置',body,`<button class="btn ghost" data-action="reset-discovery-settings">恢复默认</button><span class="spacer"></span><button class="btn primary" data-action="save-discovery-settings">保存设置</button>`);
     }
 
@@ -1976,7 +2009,7 @@
 
     function createRunFromCases(name,cases,outcomes,executionStatus='已完成',comparisonMode=state.runForm.compareMode||'draft-only') {
       const agent=currentAgent();
-      const run=buildRun(uid('RUN'),name,`${agent.draftVersion} · 当前草稿`,baselineForMode(comparisonMode,agent),cases,outcomes,'刚刚',comparisonMode);
+      const run=buildRun(uid('RUN'),name,`${agent.draftVersion} · 当前草稿`,'未运行参考智能体',cases,outcomes,'刚刚',comparisonMode);
       run.executionStatus=executionStatus;currentRuns().unshift(run);state.reportId=run.id;
       run.results.forEach(result=>updateCaseLatest(result.caseId,result));
       return run;
@@ -2127,7 +2160,7 @@
         const sourceType=target.dataset.source;
         state.caseForm.creationMode=sourceType;
         if(sourceType==='manual-import')Object.assign(state.caseForm,{importCases:[],importFileName:'',importError:''});
-        if(sourceType==='history')Object.assign(state.caseForm,{sourceAgentId:productionSourceAgents[0].id,historyRange:'最近 30 天',historyScope:'有明确问题或未解决的通话',historyCount:'5',historyInstruction:'从最近未解决、转人工或系统操作异常的通话中，提取有代表性的客户场景',historyPrivacyConfirmed:false});
+        if(sourceType==='history')Object.assign(state.caseForm,{sourceAgentId:productionSourceAgents[0].id,historyRange:'最近 30 天',historyScope:'有明确问题或未解决的通话',historyCount:'5',historyInstruction:'从最近未解决、转人工或系统操作异常的通话中，提取有代表性的客户场景'});
         if(sourceType==='agent-import')Object.assign(state.caseForm,{otherAgentId:tenantAgentCaseSources[0].id,otherAgentCaseIds:[]});
         if(sourceType==='ai-generate')Object.assign(state.caseForm,{aiBrief:'',aiCount:'5'});
         state.caseDirty=false;window.scrollTo({top:0,behavior:'smooth'});render();return;
@@ -2139,7 +2172,6 @@
       if(action==='generate-history-cases'){
         const f=state.caseForm,source=productionSourceAgents.find(agent=>agent.id===f.sourceAgentId)||productionSourceAgents[0];
         const count=Math.max(1,Math.min(20,Number(f.historyCount)||5));
-        if(!f.historyPrivacyConfirmed){showToast('请先确认脱敏和使用范围','真实客户信息必须替换为测试数据后才能生成场景草稿。','warn');return;}
         const drafts=Array.from({length:count},(_,index)=>{const draft=historyScenarioDraft(index,source);draft.historySource.range=f.historyRange||'最近 30 天';draft.historySource.scope=f.historyScope;draft.historySource.instruction=f.historyInstruction||'';return draft;});
         currentTests().unshift(...drafts);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testTab='待确认';window.scrollTo({top:0});showToast(`已生成 ${count} 条场景草稿`,'请逐条核对模拟客户说明、处理正确的条件、变量和模拟系统结果；确认前不会参加正式测试。');return;
       }
@@ -2163,6 +2195,11 @@
       }
       if(action==='toggle-agent-case'){
         const selected=state.caseForm.otherAgentCaseIds||[];state.caseForm.otherAgentCaseIds=selected.includes(id)?selected.filter(item=>item!==id):[...selected,id];render();return;
+      }
+      if(action==='toggle-all-agent-cases'){
+        const f=state.caseForm,source=tenantAgentCaseSources.find(agent=>agent.id===f.otherAgentId)||tenantAgentCaseSources[0];
+        const ids=source.cases.map((item,index)=>source.id+'-'+index),selected=f.otherAgentCaseIds||[];
+        f.otherAgentCaseIds=selected.length===ids.length?[]:ids;render();return;
       }
       if(action==='import-agent-cases'){
         const f=state.caseForm,source=tenantAgentCaseSources.find(agent=>agent.id===f.otherAgentId)||tenantAgentCaseSources[0],selected=f.otherAgentCaseIds||[];
@@ -2192,14 +2229,12 @@
       if(action==='back-to-editor'){state.overlay=null;state.route='case-editor';render();return;}
 
       if(action==='new-run'){
-        const scope=state.selectedTests.size?'selected':'all',reference=(referenceAgents[state.agentId]||[])[0];state.runForm={scope,name:`${currentAgent().draftVersion} 上线前${scope==='selected'?'所选用例':'全部用例'}测试`,caseIds:[],compareMode:'draft-only',referenceAgentId:reference?.id||'',referenceConfirmed:false,sandboxConfirmed:false};state.overlay={type:'run-modal'};render();return;
+        const scope=state.selectedTests.size?'selected':'all';state.runForm={scope,name:`${currentAgent().draftVersion} 上线前${scope==='selected'?'所选用例':'全部用例'}测试`,caseIds:[],compareMode:'draft-only',sandboxConfirmed:false};state.overlay={type:'run-modal'};render();return;
       }
       if(action==='run-scope'){state.runForm.scope=target.dataset.scope;const suffix=target.dataset.scope==='selected'?'所选用例':'全部用例';state.runForm.name=`${currentAgent().draftVersion} 上线前${suffix}测试`;state.runForm.sandboxConfirmed=false;render();return;}
-      if(action==='run-compare'){state.runForm.compareMode=target.dataset.mode;state.runForm.referenceConfirmed=false;render();return;}
       if(action==='start-run'){
         const cases=casesForScope(state.runForm.scope);if(!cases.length){showToast('没有可测试用例','请调整范围或先确认用例。','warn');return;}
-        if(state.runForm.compareMode==='reference-agent'&&!state.runForm.referenceConfirmed){showToast('请先确认参考智能体','参考智能体的当前草稿必须与生产配置一致，并在测试期间保持冻结。','warn');return;}
-        state.runForm.caseIds=cases.map(c=>c.id);startSimulation('new-run',{total:cases.length,caseIds:state.runForm.caseIds,label:state.runForm.name,comparisonMode:state.runForm.compareMode});return;
+          state.runForm.caseIds=cases.map(c=>c.id);startSimulation('new-run',{total:cases.length,caseIds:state.runForm.caseIds,label:state.runForm.name,comparisonMode:state.runForm.compareMode});return;
       }
       if(action==='cancel-run'){cancelSimulation();return;}
       if(action==='retest-case'){const c=getCase(id);if(c?.status==='ready')startSimulation('single',{caseId:id,total:1,label:`单条复测：${c.name}`});return;}
@@ -2300,7 +2335,7 @@
       if(action==='full-regression'){
         const p=getProblem(id);if(!p.caseId||!getCase(p.caseId)){showToast('还没有回归用例','先在关联证据里整理为测试用例，再回归。','warn');return;}
         const ids=eligibleTests().map(c=>c.id);if(p.caseId&&!ids.includes(p.caseId)&&getCase(p.caseId)?.status==='ready')ids.push(p.caseId);
-        if(!ids.length){showToast('没有可回归的用例','请先确认至少一条测试用例。','warn');return;}p.status='待整体回归';startSimulation('full',{caseIds:ids,total:ids.length,problemId:p.id,label:`全部已确认用例回归 · ${ids.length} 条`,comparisonMode:referenceAgentFor()?'saved-reference':'draft-only'});return;
+        if(!ids.length){showToast('没有可回归的用例','请先确认至少一条测试用例。','warn');return;}p.status='待整体回归';startSimulation('full',{caseIds:ids,total:ids.length,problemId:p.id,label:`全部已确认用例回归 · ${ids.length} 条`,comparisonMode:'draft-only'});return;
       }
       if(action==='deploy-problem'){const p=getProblem(id);p.status='待线上验证';p.deployVersion=p.targetVersion;p.deployedAt='刚刚';currentAgent().productionVersion=p.targetVersion;currentAgent().meta=`${p.targetVersion} 正在生产`;showToast('已模拟上线',`${p.targetVersion} 已进入线上观察；确认同类问题不再出现后才能关闭。`);return;}
       if(action==='close-problem'){const p=getProblem(id);p.status='已关闭';p.closedAt='刚刚';const linked=getCase(p.caseId);if(linked)linked.baselineCase=true;p.reason=`${p.reason}\n线上观察通过，已关闭；回归用例已保留为基线。`;showToast('问题已关闭',`候选、用例、复测、回归和上线记录已串成一条链路，用例 ${p.caseId||'—'} 保留为基线。`);return;}
