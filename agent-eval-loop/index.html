@@ -433,6 +433,20 @@
     .tabs.sub .tab { min-height: 26px; padding: 0 9px; border: 1px solid var(--line); background: white; border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--muted); }
     .tabs.sub .tab:hover { color: var(--ink); }
     .tabs.sub .tab.active { background: var(--ink); border-color: var(--ink); color: #fff; }
+    .asset-tabs { display:flex; align-items:center; gap:22px; margin:-4px 0 16px; border-bottom:1px solid var(--line); }
+    .asset-tab { position:relative; min-height:42px; padding:0 2px; border:0; background:transparent; color:var(--muted); font-size:13px; font-weight:650; cursor:pointer; }
+    .asset-tab:hover { color:var(--ink); }
+    .asset-tab.active { color:var(--accent); }
+    .asset-tab.active::after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; border-radius:2px; background:var(--accent); }
+    .set-summary { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+    .set-summary strong { font-size:21px; letter-spacing:-.03em; }
+    .set-case-list { display:grid; gap:8px; }
+    .set-case-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:12px; padding:11px 12px; border:1px solid var(--line); border-radius:10px; background:#fff; }
+    .set-case-row .cell-sub { margin-top:3px; }
+    .set-table .col-set-ops { width:150px; }
+    .set-table td.col-set-ops { vertical-align:middle; }
+    .set-table .row-actions { flex-wrap:nowrap; }
+    .row-actions .btn { white-space:nowrap; }
     .filter-btn { height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--line); border-radius: 9px; background: white; color: var(--muted); font-size: 11px; cursor: pointer; }
     .toolbar-spacer { flex: 1; }
     .table-card { overflow: hidden; }
@@ -1288,14 +1302,22 @@
         {name:'价格追问与加微信报价',prompt:'客户想了解奥迪 A4L 的价格，但暂时不方便到店。客户会先问价格和优惠，被邀请到店时说明不便，并询问能否加微信获取报价。',criteria:['说明价格区间或给出报价','可以加微信并留下联系方式'],avoid:['不能承诺无法确认的优惠政策']},
         {name:'试驾预约遇到系统超时',prompt:'客户希望预约周六下午试驾，会提供车型和测试手机号。预约系统返回超时，客户会根据回复决定重试或要求人工协助。',criteria:['如实说明预约结果尚未确认','提供重试或人工协助'],avoid:['系统超时时不能声称预约成功']},
         {name:'优惠活动已经结束',prompt:'客户看到旧活动海报询问优惠是否还有，实际活动已经结束。客户会追问是否有替代方案。',criteria:['明确说明活动已结束','给出当前可用的替代方案'],avoid:['不能继续按已结束的活动承诺价格']}
+      ],sets:[
+        {id:'SET-SALES-1',name:'上线前核心评测集',caseIndexes:[0,1,2]},
+        {id:'SET-SALES-2',name:'价格与留资专项',caseIndexes:[0]}
       ]},
       {id:'campaign-copy',name:'奥迪新车活动助手',version:'R1',status:'已确认 2 条用例',cases:[
         {name:'活动资格确认',prompt:'客户询问自己是否符合新车活动资格，会提供所在城市和购车时间。',criteria:['说明资格条件','给出下一步操作'],avoid:['不能承诺一定获得名额']},
         {name:'活动门店查询',prompt:'客户想了解附近参与活动的门店，会提供所在区域。',criteria:['给出可核实的门店信息'],avoid:['不能编造门店地址']}
+      ],sets:[
+        {id:'SET-CAMPAIGN-1',name:'活动上线检查',caseIndexes:[0,1]},
+        {id:'SET-CAMPAIGN-2',name:'资格条件专项',caseIndexes:[0]}
       ]},
       {id:'service-copy',name:'售后保养预约助手',version:'R3',status:'已确认 2 条用例',cases:[
         {name:'保养预约改期',prompt:'客户原定周六保养，临时需要改到周日，会提供预约手机号。',criteria:['确认改期结果'],avoid:['改期失败时不能声称已经改好']},
         {name:'保养项目咨询',prompt:'客户询问两万公里保养包含哪些项目，会追问价格。',criteria:['说明保养项目','给出价格范围或说明需到店确认'],avoid:['不能虚报低价引流']}
+      ],sets:[
+        {id:'SET-SERVICE-1',name:'售后客服回归集',caseIndexes:[0,1]}
       ]}
     ];
 
@@ -1356,12 +1378,22 @@
       }).filter(Boolean);
     }
 
-    function draftFromAgentCase(item,source) {
+    function draftFromAgentCase(item,source,setName) {
       const c=blankCase('scenario');
       c.id=uid('TC');c.name=item.name;c.interactionPrompt=item.prompt;c.status='pending';
-      c.source='从 '+source.name+' 导入';
+      c.source=setName?'从 '+source.name+' 的评测集「'+setName+'」导入':'从 '+source.name+' 导入';
       c.criteria=clone(item.criteria||[]);c.avoid=clone(item.avoid||[]);
       return c;
+    }
+
+    function sourceLabel(source) {
+      const s=String(source||'').trim();
+      if(!s||s==='人工创建') return '';
+      const set=s.match(/的评测集「(.+?)」/);
+      if(set) return '评测集 '+set[1];
+      const agent=s.match(/^从 (.+?) 导入$/);
+      if(agent) return '来自 '+agent[1];
+      return s;
     }
 
     function demoCase(type='scenario') {
@@ -1602,15 +1634,32 @@
     }
     removeSingleTurnCases();
 
+    function seedEvaluationSets() {
+      const salesReady=db['bmw-sales'].tests.filter(test=>test.status==='ready');
+      const campaignReady=db['bmw-campaign'].tests.filter(test=>test.status==='ready');
+      const ids=(list,pattern,limit)=>list.filter(test=>pattern.test(test.name)).slice(0,limit).map(test=>test.id);
+      db['bmw-sales'].sets=[
+        {id:'SET-S-001',name:'上线前核心评测集',description:'覆盖报价、留资、预约、转人工和异常回执，是每次准备上线前必须运行的一组用例。',caseIds:salesReady.slice(0,8).map(test=>test.id),updated:'今天 16:20',owner:'魏策',lastRunId:'RUN-1042'},
+        {id:'SET-S-002',name:'价格与留资专项',description:'用于检查价格咨询、线上报价、客户授权和线索登记是否处理正确。',caseIds:ids(salesReady,/价格|报价|留资|微信|手机号/,6),updated:'昨天',owner:'魏策',lastRunId:'RUN-1041'},
+        {id:'SET-S-003',name:'异常流程与人工服务',description:'集中验证系统失败、操作超时、客户投诉及明确要求人工时的处理。',caseIds:ids(salesReady,/预约|失败|超时|投诉|转人工|人工/,6),updated:'11 月 3 日',owner:'运营组',lastRunId:''}
+      ];
+      db['bmw-campaign'].sets=[
+        {id:'SET-A-001',name:'活动咨询基础评测集',description:'活动资格、报名流程及常见咨询的基础用例。',caseIds:campaignReady.slice(0,6).map(test=>test.id),updated:'11 月 2 日',owner:'运营组',lastRunId:''},
+        {id:'SET-A-002',name:'活动报名异常评测集',description:'重点检查名额不足、报名失败和系统超时后的处理。',caseIds:ids(campaignReady,/报名|活动|失败|超时/,5),updated:'11 月 1 日',owner:'运营组',lastRunId:''}
+      ];
+    }
+    seedEvaluationSets();
+
     const state = {
-      agentId:'bmw-sales',route:'tests',overlay:null,agentMenu:false,testTab:'全部',discoveryTab:'等待确认',discoverySub:'继续观察',onlineView:'issues',reportTab:'需处理',
-      selectedTests:new Set(),caseForm:null,caseDirty:false,generatedForm:null,generatedDirty:false,reviewForm:{},problemForm:{},ruleForm:null,ruleTab:'全部规则',
+      agentId:'bmw-sales',route:'tests',overlay:null,agentMenu:false,testView:'cases',testTab:'全部',discoveryTab:'等待确认',discoverySub:'继续观察',onlineView:'issues',reportTab:'需处理',
+      selectedTests:new Set(),caseForm:null,caseDirty:false,setForm:null,generatedForm:null,generatedDirty:false,reviewForm:{},problemForm:{},ruleForm:null,ruleTab:'全部规则',
       runForm:{scope:'all',name:'',caseIds:[],compareMode:'draft-only',sandboxConfirmed:false},reportId:'RUN-1042',runProgress:0,activeJob:null,toast:null,analysisRunning:false
     };
 
     const currentAgent = () => agents.find(a=>a.id===state.agentId)||agents[0];
     const currentDB = () => db[state.agentId];
     const currentTests = () => currentDB().tests;
+    const currentSets = () => currentDB().sets||(currentDB().sets=[]);
     const currentRuns = () => currentDB().runs;
     const eligibleTests = () => currentTests().filter(t=>t.status==='ready');
     const getCase = id => currentTests().find(t=>t.id===id);
@@ -1672,6 +1721,7 @@
 
     function pageTitle() {
       if(state.route==='online'&&state.onlineView==='rules') return '线上问题 / 检查规则';
+      if(state.route==='tests'&&state.testView==='sets') return '评测集';
       return ({online:'线上问题',tests:'测试用例','case-editor':'编辑测试用例',runs:'测试任务',report:'测试结果'})[state.route]||'测试用例';
     }
 
@@ -1685,7 +1735,7 @@
       const pending=data.candidates.filter(c=>c.status==='待复核').length;
       const drafts=data.tests.filter(t=>t.status==='pending'||t.status==='draft').length;
       return `<aside class="sidebar">
-        <div class="brand"><div class="brand-mark"><span></span></div><div>智能体测试<span class="brand-sub">V0.10 · 四类判断与直接建用例</span></div></div>
+        <div class="brand"><div class="brand-mark"><span></span></div><div>智能体测试<span class="brand-sub">V0.10 · 用例与评测集</span></div></div>
         <div class="agent-switcher">
           <button class="agent-card" data-action="toggle-agent-menu" aria-expanded="${state.agentMenu}"><span class="agent-card-top"><span class="agent-avatar">${agent.avatar}</span><span style="min-width:0"><span class="agent-name">${agent.name}</span><span class="agent-meta"><span class="live-dot ${agent.hasProduction?'':'draft'}"></span>${agent.meta}</span></span><span style="margin-left:auto">${icon('chevronDown',14)}</span></span></button>
           ${state.agentMenu?`<div class="agent-menu"><div class="agent-menu-title">切换智能体</div>${agents.map(a=>`<button class="agent-option ${a.id===agent.id?'active':''}" data-action="switch-agent" data-id="${a.id}"><div class="agent-avatar" style="width:30px;height:30px">${a.avatar}</div><div class="agent-option-copy"><strong>${a.name}</strong><span>${a.meta}</span></div><span class="agent-status ${a.hasProduction?'':'draft'}">${a.status}</span></button>`).join('')}</div>`:''}
@@ -1709,22 +1759,52 @@
       return `<tr><td colspan="${cols}"><div class="empty"><div><strong>${esc(text)}</strong></div></div></td></tr>`;
     }
 
+    function testAssetTabs() {
+      return `<div class="asset-tabs"><button class="asset-tab ${state.testView==='cases'?'active':''}" data-action="test-view" data-view="cases">测试用例</button><button class="asset-tab ${state.testView==='sets'?'active':''}" data-action="test-view" data-view="sets">评测集 <span class="section-meta">${currentSets().length}</span></button></div>`;
+    }
+
     function renderTests() {
+      const viewingSets=state.testView==='sets';
+      if(viewingSets) return renderEvaluationSets();
       const tests=currentTests();
       const filtered=state.testTab==='待确认'?tests.filter(t=>['draft','pending'].includes(t.status)):tests;
       const promptOf=c=>c.interactionPrompt||c.question||c.expectedAnswer||'尚未填写用户提示';
       const criteriaOf=c=>(c.criteria&&c.criteria.length)?c.criteria.join('；'):(c.expectedAnswer||'尚未填写成功标准');
-      const selectable=filtered.filter(t=>t.status==='ready');
-      const allSelected=selectable.length>0&&selectable.every(t=>state.selectedTests.has(t.id));
-      return `<div class="page"><div class="page-head"><div class="page-head-copy"><h1>测试用例</h1></div><div class="page-actions"><button class="btn" data-action="new-case">${icon('plus',15)}新建用例</button>${eligibleTests().length?`<button class="btn primary" data-action="new-run">${icon('runs',15)}开始测试</button>`:''}</div></div>
-        ${tests.length?`<div class="toolbar"><div class="tabs">${['全部','待确认'].map(tab=>`<button class="tab ${state.testTab===tab?'active':''}" data-action="test-tab" data-tab="${tab}">${tab}</button>`).join('')}</div><div class="toolbar-spacer"></div>${state.selectedTests.size?`<span class="section-meta">已选 ${state.selectedTests.size} 条</span><button class="btn soft small" data-action="new-run">运行所选</button>`:''}</div>
-        <div class="card table-card"><div class="table-scroll"><table class="case-table"><thead><tr><th class="col-check"><input class="check" type="checkbox" data-action="select-all-tests" ${allSelected?'checked':''} ${selectable.length?'':'disabled'} aria-label="全选可测试用例"></th><th class="col-name">场景用例</th><th>用户提示</th><th>成功标准</th><th class="col-time">最近编辑</th><th class="col-ops">操作</th></tr></thead><tbody>${filtered.map(c=>{const ready=c.status==='ready';return `<tr data-action="${ready?'open-test':'edit-case'}" data-id="${c.id}" tabindex="0"><td class="col-check"><input class="check" type="checkbox" ${state.selectedTests.has(c.id)?'checked':''} data-action="select-test" data-id="${c.id}" ${ready?'':'disabled'} aria-label="选择 ${esc(c.name)}"></td><td class="col-name"><div class="cell-main">${esc(c.name||'未命名测试用例')}</div><div class="cell-sub">${esc(c.id||'尚未编号')} · ${esc(statusLabels[c.status]||'草稿')}${c.baselineCase?' · 回归基线':''}</div></td><td><div class="cell-clamp">${esc(promptOf(c))}</div></td><td><div class="cell-clamp">${esc(criteriaOf(c))}</div></td><td class="col-time"><div class="cell-sub" style="margin-top:0">${esc(c.updated||'刚刚')}</div></td><td class="col-ops"><div class="row-actions"><button class="btn small" data-action="edit-case" data-id="${c.id}">${icon('edit',13)}编辑</button><button class="btn small" data-action="retest-case" data-id="${c.id}" ${ready?'':'disabled'}>${icon('refresh',13)}测试</button><button class="btn small danger" data-action="delete-case" data-id="${c.id}">${icon('trash',13)}删除</button></div></td></tr>`}).join('')||emptyRow(6,'当前分类没有用例')}</tbody></table></div></div>`:`<section class="card empty"><div><h2>先创建第一条场景用例</h2><p>可以从零编写，也可以从生产智能体的真实通话中提取场景草稿。</p><button class="btn primary" data-action="new-case">${icon('plus',14)}新建用例</button></div></section>`}
+      return `<div class="page"><div class="page-head"><div class="page-head-copy"><h1>测试用例</h1><p class="page-sub">维护单条客户场景和判断条件；需要组合运行时，把已确认用例加入评测集。</p></div><div class="page-actions"><button class="btn primary" data-action="new-case">${icon('plus',15)}创建用例</button></div></div>${testAssetTabs()}
+        ${tests.length?`<div class="toolbar"><div class="tabs">${['全部','待确认'].map(tab=>`<button class="tab ${state.testTab===tab?'active':''}" data-action="test-tab" data-tab="${tab}">${tab}</button>`).join('')}</div><div class="toolbar-spacer"></div><span class="section-meta">已确认 ${eligibleTests().length} 条 · 待确认 ${tests.filter(t=>t.status!=='ready').length} 条</span></div>
+        <div class="card table-card"><div class="table-scroll"><table class="case-table"><thead><tr><th class="col-name">场景用例</th><th>用户提示</th><th>成功标准</th><th class="col-time">最近编辑</th><th class="col-ops">操作</th></tr></thead><tbody>${filtered.map(c=>{const ready=c.status==='ready';return `<tr data-action="${ready?'open-test':'edit-case'}" data-id="${c.id}" tabindex="0"><td class="col-name"><div class="cell-main">${esc(c.name||'未命名测试用例')}</div><div class="cell-sub">${esc(c.id||'尚未编号')} · ${esc(statusLabels[c.status]||'草稿')}${c.baselineCase?' · 回归基线':''}${sourceLabel(c.source)?' · '+esc(sourceLabel(c.source)):''}</div></td><td><div class="cell-clamp">${esc(promptOf(c))}</div></td><td><div class="cell-clamp">${esc(criteriaOf(c))}</div></td><td class="col-time"><div class="cell-sub" style="margin-top:0">${esc(c.updated||'刚刚')}</div></td><td class="col-ops"><div class="row-actions"><button class="btn small" data-action="edit-case" data-id="${c.id}">${icon('edit',13)}编辑</button><button class="btn small" data-action="retest-case" data-id="${c.id}" ${ready?'':'disabled'}>${icon('refresh',13)}测试</button><button class="btn small danger" data-action="delete-case" data-id="${c.id}">${icon('trash',13)}删除</button></div></td></tr>`}).join('')||emptyRow(5,'当前分类没有用例')}</tbody></table></div></div>`:`<section class="card empty"><div><h2>先创建第一条用例</h2><p>可以手动添加、手动导入、从生产通话提取、从其他智能体导入，也可以让 AI 自动生成。</p><button class="btn primary" data-action="new-case">${icon('plus',14)}创建用例</button></div></section>`}
       </div>`;
+    }
+
+    function renderEvaluationSets() {
+      const sets=currentSets();
+      return `<div class="page"><div class="page-head"><div class="page-head-copy"><h1>评测集</h1><p class="page-sub">把一组已确认用例保存为固定范围，用于专项评测、上线前检查或问题修复后的重复验证。</p></div><div class="page-actions"><button class="btn primary" data-action="new-set">${icon('plus',15)}新建评测集</button></div></div>${testAssetTabs()}
+        <div class="notice" style="margin-bottom:12px"><span>${icon('tests',16)}</span><div><strong>评测集保存测试范围，不保存一次测试结果</strong><p>每次运行都会生成新的测试任务；以后增删评测集中的用例，不会改变历史任务和报告。</p></div></div>
+        ${sets.length?`<div class="card table-card"><div class="table-scroll"><table class="set-table"><thead><tr><th>评测集</th><th>用途说明</th><th>关联用例</th><th>最近一次评测</th><th>最近编辑</th><th class="col-set-ops">操作</th></tr></thead><tbody>${sets.map(set=>{const cases=(set.caseIds||[]).map(getCase).filter(Boolean),ready=cases.filter(test=>test.status==='ready'),run=set.lastRunId?getRun(set.lastRunId):null,stats=run?runStats(run):null;return `<tr data-action="open-set" data-id="${set.id}" tabindex="0"><td><div class="cell-main">${esc(set.name)}</div><div class="cell-sub">${esc(set.id)} · ${esc(set.owner||'未指定负责人')}</div></td><td><div class="cell-clamp">${esc(set.description||'尚未填写用途说明')}</div></td><td><div class="cell-main">${ready.length} 条可运行</div><div class="cell-sub">共关联 ${cases.length} 条</div></td><td>${run?`<div class="cell-main">${stats.pass} 条处理正确</div><div class="cell-sub">${stats.fail+stats.review+stats.error} 条需要处理 · ${esc(run.time)}</div>`:'<span class="cell-sub">尚未运行</span>'}</td><td><span class="cell-sub">${esc(set.updated||'刚刚')}</span></td><td class="col-set-ops"><div class="row-actions"><button class="btn small" data-action="open-set" data-id="${set.id}">查看</button><button class="btn small primary" data-action="run-set" data-id="${set.id}" ${ready.length?'':'disabled'}>${icon('runs',13)}运行评测</button></div></td></tr>`;}).join('')}</tbody></table></div></div>`:`<section class="card empty"><div><h2>还没有评测集</h2><p>新建一个评测集，选择已经确认的测试用例，即可反复运行同一组评测。</p><button class="btn primary" data-action="new-set">${icon('plus',14)}新建评测集</button></div></section>`}
+      </div>`;
+    }
+
+    function renderSetEditor() {
+      const f=state.setForm;if(!f)return '';
+      const selected=new Set(f.caseIds||[]),tests=currentTests(),ready=tests.filter(test=>test.status==='ready');
+      const q=String(state.setCaseQuery||'').trim(),kw=q.toLowerCase();
+      const shown=kw?tests.filter(test=>String(test.name||'').toLowerCase().includes(kw)||String(test.id||'').toLowerCase().includes(kw)):tests;
+      const body=`<div class="form-grid"><div class="field full"><label>评测集名称 *</label><input class="input" data-set-field="name" value="${esc(f.name||'')}" placeholder="例如：上线前核心评测集"></div><div class="field full"><label>用途说明</label><textarea class="textarea" data-set-field="description" placeholder="说明这组用例在什么情况下运行，以及主要覆盖哪些业务问题">${esc(f.description||'')}</textarea></div><div class="field full"><label>选择测试用例 *</label><span class="hint">只有已经确认的用例可以加入评测集。当前已选择 ${selected.size} 条。</span><div style="margin-top:10px"><input class="input" data-set-search value="${esc(state.setCaseQuery||'')}" placeholder="搜索用例名称或编号"></div><div class="set-case-list" style="margin-top:8px">${shown.map(test=>{const canUse=test.status==='ready',checked=selected.has(test.id);return `<label class="check-item"><input class="check" type="checkbox" data-action="toggle-set-case" data-id="${test.id}" ${checked?'checked':''} ${canUse?'':'disabled'}><span class="check-copy"><strong>${esc(test.name)}</strong><span>${esc(test.id)} · ${canUse?'已确认，可以运行':'尚未确认，暂时不能加入评测集'}</span></span>${badge(canUse?'已确认':'待确认',canUse?'pass':'review')}</label>`;}).join('')||`<div class="empty"><p>${kw?`没有匹配“${esc(q)}”的用例。`:'当前还没有测试用例。'}</p></div>`}</div></div></div>`;
+      const foot=`<button class="btn ghost" data-action="close-overlay">取消</button><span class="spacer"></span><span class="section-meta">${selected.size} / ${ready.length} 条已确认用例</span><button class="btn primary" data-action="save-set">${f.id?'保存修改':'创建评测集'}</button>`;
+      return drawerShell(f.id?'编辑评测集':'新建评测集',f.id?`${f.id} · 修改只影响后续评测`:'选择一组可重复运行的测试用例',body,foot,true);
+    }
+
+    function renderSetDrawer(id) {
+      const set=currentSets().find(item=>item.id===id);if(!set)return '';
+      const cases=(set.caseIds||[]).map(getCase).filter(Boolean),ready=cases.filter(test=>test.status==='ready'),run=set.lastRunId?getRun(set.lastRunId):null,stats=run?runStats(run):null;
+      const body=`<div class="notice"><span>${icon('tests',16)}</span><div><strong>${esc(set.description||'尚未填写用途说明')}</strong><p>负责人：${esc(set.owner||'未指定')} · 最近编辑：${esc(set.updated||'刚刚')}</p></div></div><div class="set-summary" style="margin:18px 0"><div><strong>${cases.length}</strong><div class="cell-sub">关联用例</div></div><div><strong>${ready.length}</strong><div class="cell-sub">当前可运行</div></div><div><strong>${run?stats.pass:'—'}</strong><div class="cell-sub">最近处理正确</div></div><div><strong>${run?stats.fail+stats.review+stats.error:'—'}</strong><div class="cell-sub">最近需要处理</div></div></div><div class="section-head"><div><div class="section-title">包含的测试用例</div><div class="section-meta">运行时使用每条用例的当前已确认版本</div></div></div><div class="set-case-list">${cases.map(test=>`<div class="set-case-row"><div><div class="cell-main">${esc(test.name)}</div><div class="cell-sub">${esc(test.id)} · ${esc((test.criteria||[]).join('；')||'尚未填写判断条件')}</div></div>${badge(statusLabels[test.status]||test.status,resultTone(test.status))}</div>`).join('')||'<div class="empty"><p>这个评测集还没有关联用例。</p></div>'}</div>${run?`<div class="snapshot-note">最近任务：${esc(run.name)} · ${esc(run.time)}。打开测试任务可查看每条用例的对话和判断证据。</div>`:''}`;
+      const foot=`<button class="btn danger" data-action="delete-set" data-id="${set.id}">${icon('trash',13)}删除评测集</button><span class="spacer"></span><button class="btn" data-action="edit-set" data-id="${set.id}">${icon('edit',13)}编辑用例范围</button><button class="btn primary" data-action="run-set" data-id="${set.id}" ${ready.length?'':'disabled'}>${icon('runs',14)}运行这个评测集</button>`;
+      return drawerShell(set.name,`${set.id} · ${ready.length} 条用例可运行`,body,foot,true);
     }
     function renderRuns() {
       const runs=currentRuns(),agent=currentAgent();
       return `<div class="page"><div class="page-head"><div class="page-head-copy"><h1>测试任务</h1><p class="page-sub">当前草稿始终通过调试接口运行。测试只针对草稿本身，按用例要求判断处理是否正确。</p></div></div>
-      ${runs.length?`<div class="card table-card"><div class="table-scroll"><table><thead><tr><th>任务名称</th><th>被测智能体</th><th>被测版本</th><th>已完成范围</th><th>处理正确</th><th>处理有问题</th><th>待人工看</th><th>执行状态</th><th>时间</th></tr></thead><tbody>${runs.map(run=>{const s=runStats(run);return `<tr data-action="open-report" data-id="${run.id}" tabindex="0"><td><div class="cell-main">${esc(run.name)}</div><div class="cell-sub">${run.id}</div></td><td><div class="cell-main">${esc(run.agentName||agent.name)}</div><div class="cell-sub">测试副本</div></td><td>${esc(run.version)}</td><td>${s.total} / ${run.caseIds.length}</td><td><span style="color:var(--mint);font-weight:650">${s.pass}</span></td><td><span style="color:var(--red);font-weight:650">${s.fail}</span></td><td>${s.review+s.error}</td><td>${badge(run.executionStatus,resultTone(run.executionStatus))}</td><td>${esc(run.time)}</td></tr>`}).join('')}</tbody></table></div></div>`:`<section class="card empty"><div><h2>还没有测试任务</h2><p>先确认至少一条测试用例，再开始第一次测试。</p><button class="btn primary" data-nav="tests">前往测试用例</button></div></section>`}</div>`;
+      ${runs.length?`<div class="card table-card"><div class="table-scroll"><table><thead><tr><th>任务名称</th><th>被测智能体</th><th>被测版本</th><th>已完成范围</th><th>处理正确</th><th>处理有问题</th><th>待人工看</th><th>执行状态</th><th>时间</th></tr></thead><tbody>${runs.map(run=>{const s=runStats(run),setName=run.setName||(run.setId?currentSets().find(item=>item.id===run.setId)?.name:'');return `<tr data-action="open-report" data-id="${run.id}" tabindex="0"><td><div class="cell-main">${esc(run.name)}</div><div class="cell-sub">${run.id}${setName?` · 来自评测集：${esc(setName)}`:''}</div></td><td><div class="cell-main">${esc(run.agentName||agent.name)}</div><div class="cell-sub">测试副本</div></td><td>${esc(run.version)}</td><td>${s.total} / ${run.caseIds.length}</td><td><span style="color:var(--mint);font-weight:650">${s.pass}</span></td><td><span style="color:var(--red);font-weight:650">${s.fail}</span></td><td>${s.review+s.error}</td><td>${badge(run.executionStatus,resultTone(run.executionStatus))}</td><td>${esc(run.time)}</td></tr>`}).join('')}</tbody></table></div></div>`:`<section class="card empty"><div><h2>还没有测试任务</h2><p>先确认至少一条测试用例，再开始第一次测试。</p><button class="btn primary" data-nav="tests">前往测试用例</button></div></section>`}</div>`;
     }
 
     function renderDiscovery() {
@@ -1820,8 +1900,12 @@
       if(!editing&&f.creationMode==='agent-import') {
         const source=tenantAgentCaseSources.find(agent=>agent.id===f.otherAgentId)||tenantAgentCaseSources[0];
         const selected=f.otherAgentCaseIds||[];
+        const sourceSets=source.sets||[];
+        const activeSet=sourceSets.find(item=>item.id===f.otherAgentSetId)||null;
+        const q=String(state.agentCaseQuery||'').trim(),kw=q.toLowerCase();
+        const rows=source.cases.map((item,index)=>({item,index})).filter(({item})=>!kw||String(item.name||'').toLowerCase().includes(kw)||String(item.prompt||'').toLowerCase().includes(kw));
         const allSelected=source.cases.length>0&&selected.length===source.cases.length;
-        return `<div class="page editor-page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-action="back-to-case-source">← 重新选择创建方式</button><h1 style="margin-top:9px">从其他智能体导入</h1><p class="page-sub">选择租户内的智能体，再选择要复用的已有测试用例。</p></div><div class="page-actions">${badge(`${source.status} · ${source.version}`,'accent')}${badge(`已选 ${selected.length} 条`,selected.length?'success':'review')}</div></div><div class="editor-layout no-aside"><div class="editor-main"><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('agents',16)}</div><div class="editor-section-copy"><h2>选择用例来源</h2><p>这里只读取其他智能体已经维护的测试用例，不读取它的生产通话。</p></div></div><div class="editor-section-body"><div class="field" style="max-width:520px"><label>租户内的智能体</label><select class="select" data-case-field="otherAgentId">${tenantAgentCaseSources.map(agent=>`<option value="${agent.id}" ${source.id===agent.id?'selected':''}>${esc(agent.name)} · ${agent.version} · ${agent.status}</option>`).join('')}</select></div></div></section><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('tests',16)}</div><div class="editor-section-copy"><h2>选择测试用例</h2><p>导入的是一份独立副本，后续修改不会影响来源智能体。</p></div><label style="margin-left:auto;flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)"><input class="check" type="checkbox" data-action="toggle-all-agent-cases" ${allSelected?'checked':''} ${source.cases.length?'':'disabled'}>全选</label></div><div class="editor-section-body"><div class="tool-stack">${source.cases.map((item,index)=>{const caseId=`${source.id}-${index}`,checked=selected.includes(caseId);return `<label class="check-item"><input class="check" type="checkbox" data-action="toggle-agent-case" data-id="${caseId}" ${checked?'checked':''}><span class="check-copy"><strong>${esc(item.name)}</strong><span>${esc(item.prompt)}</span></span></label>`;}).join('')}</div></div></section><div class="editor-savebar"><button class="btn ghost" data-action="back-to-case-source">取消</button><span class="spacer"></span><button class="btn primary" data-action="import-agent-cases" ${selected.length?'':'disabled'}>导入 ${selected.length} 条用例</button></div></div></div></div>`;
+        return `<div class="page editor-page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-action="back-to-case-source">← 重新选择创建方式</button><h1 style="margin-top:9px">从其他智能体导入</h1><p class="page-sub">选择租户内的智能体，可以逐条挑选用例，也可以直接导入它已经维护好的评测集。</p></div><div class="page-actions">${badge(`${source.status} · ${source.version}`,'accent')}${badge(`已选 ${selected.length} 条`,selected.length?'success':'review')}</div></div><div class="editor-layout no-aside"><div class="editor-main"><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('agents',16)}</div><div class="editor-section-copy"><h2>选择用例来源</h2><p>这里只读取其他智能体已经维护的测试用例和评测集，不读取它的生产通话。</p></div></div><div class="editor-section-body"><div style="display:flex;gap:16px;flex-wrap:wrap"><div class="field" style="flex:1 1 300px;max-width:460px"><label>租户内的智能体</label><select class="select" data-case-field="otherAgentId">${tenantAgentCaseSources.map(agent=>`<option value="${agent.id}" ${source.id===agent.id?'selected':''}>${esc(agent.name)} · ${agent.version} · ${agent.status}</option>`).join('')}</select></div><div class="field" style="flex:1 1 240px;max-width:320px"><label>来源范围</label><select class="select" data-case-field="otherAgentSetId"><option value="">全部用例 · ${source.cases.length} 条</option>${sourceSets.map(set=>`<option value="${set.id}" ${f.otherAgentSetId===set.id?'selected':''}>评测集 · ${esc(set.name)} · ${set.caseIndexes.length} 条</option>`).join('')}</select>${activeSet?'':'<span class="hint">选择评测集会一次性勾选它包含的用例。</span>'}</div></div></div></section><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('tests',16)}</div><div class="editor-section-copy"><h2>选择测试用例</h2><p>导入的是一份独立副本，后续修改不会影响来源智能体。</p></div><label style="margin-left:auto;flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)"><input class="check" type="checkbox" data-action="toggle-all-agent-cases" ${allSelected?'checked':''} ${source.cases.length?'':'disabled'}>全选</label></div><div class="editor-section-body"><input class="input" data-agent-case-search value="${esc(state.agentCaseQuery||'')}" placeholder="搜索用例名称或描述">${activeSet?`<span class="hint" style="display:block;margin-top:8px">已按评测集「${esc(activeSet.name)}」选中 ${activeSet.caseIndexes.length} 条，可以继续手动增减。</span>`:''}<div class="tool-stack" style="margin-top:10px">${rows.map(({item,index})=>{const caseId=`${source.id}-${index}`,checked=selected.includes(caseId);return `<label class="check-item"><input class="check" type="checkbox" data-action="toggle-agent-case" data-id="${caseId}" ${checked?'checked':''}><span class="check-copy"><strong>${esc(item.name)}</strong><span>${esc(item.prompt)}</span></span></label>`;}).join('')||`<div class="empty"><p>${kw?`没有匹配“${esc(q)}”的用例。`:'这个智能体还没有可导入的用例。'}</p></div>`}</div></div></section><div class="editor-savebar"><button class="btn ghost" data-action="back-to-case-source">取消</button><span class="spacer"></span><button class="btn primary" data-action="import-agent-cases" ${selected.length?'':'disabled'}>导入 ${selected.length} 条用例</button></div></div></div></div>`;
       }
 
       if(!editing&&f.creationMode==='ai-generate') {
@@ -1839,7 +1923,7 @@
       }
 
       return `<div class="page editor-page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-action="leave-editor">← ${f.originProblemId?'返回线上问题':'返回测试用例'}</button><h1 style="margin-top:9px">${f.originProblemId?'根据线上问题创建用例':`${editing?'编辑':'新建'}用例`}</h1><p class="page-sub">${f.originProblemId?'系统已经根据代表性通话预填客户场景和判断条件，请核对后保存。':'用一段完整提示词模拟客户，允许对话根据智能体回复自然分支；最终按业务结果和禁止事项判断。'}</p></div><div class="page-actions">${!editing&&!f.originProblemId?`<button class="btn small" data-action="fill-case-demo">填入示例</button>`:''}${badge(state.caseDirty?'有未保存修改':statusLabels[f.status],state.caseDirty?'review':'')}</div></div>
-      <div class="editor-layout no-aside"><div class="editor-main"><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('spark',16)}</div><div class="editor-section-copy"><h2>完整的客户模拟提示词</h2><p>不拆成身份、目标、情绪等多个字段，直接用一段完整提示词定义模拟客户。</p></div></div><div class="editor-section-body"><div class="field full"><label>用例名称 *</label><input class="input" value="${esc(f.name)}" data-case-field="name" placeholder="例如：价格追问与加微信报价"></div><div class="subsection"><div class="field"><label>客户与智能体交互提示词 *</label><textarea class="textarea" style="min-height:250px" data-case-field="interactionPrompt" placeholder="在一个完整提示词中说明：客户是谁、想完成什么、第一次会怎么说、会提供哪些信息、如何根据智能体回复继续交流，以及何时结束。">${esc(f.interactionPrompt)}</textarea><span class="hint">客户后续表达会根据智能体实际回复变化，不会照抄历史通话。</span></div><details style="margin-top:12px"><summary class="section-meta" style="cursor:pointer">运行设置</summary><div class="field" style="margin-top:10px;max-width:320px"><label>最多交流多少轮</label><input class="input" data-case-field="maxTurns" value="${esc(f.maxTurns||'10')}"></div></details></div></div></section>
+      <div class="editor-layout no-aside"><div class="editor-main"><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('spark',16)}</div><div class="editor-section-copy"><h2>完整的客户模拟提示词</h2><p>不拆成身份、目标、情绪等多个字段，直接用一段完整提示词定义模拟客户。</p></div></div><div class="editor-section-body"><div class="field full"><label>用例名称 *</label><input class="input" value="${esc(f.name)}" data-case-field="name" placeholder="例如：价格追问与加微信报价"><span class="hint">来源：${esc(f.source||'人工创建')}</span></div><div class="subsection"><div class="field"><label>客户与智能体交互提示词 *</label><textarea class="textarea" style="min-height:250px" data-case-field="interactionPrompt" placeholder="在一个完整提示词中说明：客户是谁、想完成什么、第一次会怎么说、会提供哪些信息、如何根据智能体回复继续交流，以及何时结束。">${esc(f.interactionPrompt)}</textarea><span class="hint">客户后续表达会根据智能体实际回复变化，不会照抄历史通话。</span></div><details style="margin-top:12px"><summary class="section-meta" style="cursor:pointer">运行设置</summary><div class="field" style="margin-top:10px;max-width:320px"><label>最多交流多少轮</label><input class="input" data-case-field="maxTurns" value="${esc(f.maxTurns||'10')}"></div></details></div></div></section>
       <section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('check',16)}</div><div class="editor-section-copy"><h2>怎样算事情办成 *</h2><p>每行一条，结果页会逐条展示对话或系统操作证据。</p></div></div><div class="editor-section-body"><textarea class="textarea" style="min-height:120px" data-case-field="criteriaText" placeholder="每行一条事情办成的条件">${esc((f.criteria||[]).join('\n'))}</textarea></div></section>
       <section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('issues',16)}</div><div class="editor-section-copy"><h2>哪些事情不能发生</h2><p>每行一条；出现任意一种，都需要在结果中明确标记。</p></div></div><div class="editor-section-body"><textarea class="textarea" data-case-field="avoidText" placeholder="例如：系统失败时不能声称已经办理成功">${esc((f.avoid||[]).join('\n'))}</textarea></div></section>
       <section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('copy',16)}</div><div class="editor-section-copy"><h2>测试变量</h2><p>定义模拟客户可以使用的客户资料和业务字段。</p></div><button class="btn small" data-action="add-variable">${icon('plus',13)}添加变量</button></div><div class="editor-section-body">${f.variables.length?`<div class="data-table"><div class="data-head"><span>变量名称</span><span>内容类型</span><span>测试值</span><span>必须填写</span><span>隐藏敏感内容</span><span></span></div>${renderVariableRows()}</div>`:'<p class="page-sub">当前没有测试变量；需要时再添加。</p>'}</div></section>
@@ -1949,6 +2033,10 @@
 
     function runScopeCount(scope) {
       if(scope==='selected') return eligibleTests().filter(c=>state.selectedTests.has(c.id)).length;
+      if(scope==='set') {
+        const set=currentSets().find(item=>item.id===state.runForm.setId);
+        return set?(set.caseIds||[]).map(getCase).filter(test=>test?.status==='ready').length:0;
+      }
       return eligibleTests().length;
     }
 
@@ -1957,12 +2045,13 @@
 
     function renderRunModal() {
       const agent=currentAgent(),scope=state.runForm.scope,total=runScopeCount(scope);
-      const selectedCases=eligibleTests().filter(c=>scope==='selected'?state.selectedTests.has(c.id):true);
-      const sandbox=selectedCases.some(c=>c.tools.some(t=>t.mode==='sandbox'));
-      const choices=[['selected','当前选中的用例','只测试列表中已勾选且已确认的用例',runScopeCount('selected')],['all','全部可测试用例','不包括草稿和待确认用例',runScopeCount('all')]];
+      const selectedCases=casesForScope(scope);
+      const sandbox=selectedCases.some(c=>(c.tools||[]).some(t=>t.mode==='sandbox'));
+      const set=scope==='set'?currentSets().find(item=>item.id===state.runForm.setId):null;
+      const choices=scope==='set'?[['set',set?.name||'当前评测集','只运行这个评测集中当前已确认的用例',runScopeCount('set')]]:[['selected','当前选中的用例','只测试列表中已勾选且已确认的用例',runScopeCount('selected')],['all','全部可测试用例','不包括草稿和待确认用例',runScopeCount('all')]];
       const canStart=total&&(!sandbox||state.runForm.sandboxConfirmed);
-      const body=`<div class="form-grid"><div class="field full"><label>任务名称</label><input class="input" data-run-field="name" value="${esc(state.runForm.name)}"></div><div class="field"><label>被测智能体</label><input class="input" value="${agent.name} · 测试副本" readonly></div><div class="field"><label>被测版本</label><input class="input" value="${agent.draftVersion} · 当前草稿 · 调试接口" readonly></div><div class="field full"><label>选择哪些客户问题</label><div class="choice-grid">${choices.map(([key,label,desc,count])=>`<button class="choice ${scope===key?'selected':''}" data-action="run-scope" data-scope="${key}" ${count?'':'disabled'}><div class="choice-icon">${count}</div><strong>${label}</strong><p>${desc}</p></button>`).join('')}</div>${!total?'<div class="field-error">当前范围没有可测试用例，请先确认用例或选择其他范围。</div>':''}</div>${sandbox?`<div class="field full"><label class="check-item"><input class="check" type="checkbox" data-run-field="sandboxConfirmed" ${state.runForm.sandboxConfirmed?'checked':''}><span class="check-copy"><strong>已确认测试账号和权限</strong><span>只连接专门测试系统，不连接正在服务真实客户的系统。</span></span></label></div>`:''}</div>`;
-      return `<div class="overlay"><div class="modal-wrap"><section class="modal" role="dialog" aria-modal="true"><div class="drawer-head"><div class="drawer-title"><h2>新建测试任务</h2><p>${agent.name} · 只测试当前草稿 · 预计测试 ${total} 个客户问题</p></div><button class="icon-btn" data-action="close-overlay">${icon('close',16)}</button></div><div class="drawer-body">${body}</div><div class="drawer-foot"><button class="btn" data-action="close-overlay">取消</button><span class="spacer"></span><button class="btn primary" data-action="start-run" ${canStart?'':'disabled'}>开始测试</button></div></section></div></div>`;
+      const body=`<div class="form-grid"><div class="field full"><label>任务名称</label><input class="input" data-run-field="name" value="${esc(state.runForm.name)}"></div><div class="field"><label>被测智能体</label><input class="input" value="${agent.name} · 测试副本" readonly></div><div class="field"><label>被测版本</label><input class="input" value="${agent.draftVersion} · 当前草稿 · 调试接口" readonly></div><div class="field full"><label>${scope==='set'?'本次评测范围':'选择哪些客户问题'}</label><div class="choice-grid">${choices.map(([key,label,desc,count])=>`<button class="choice ${scope===key?'selected':''}" data-action="run-scope" data-scope="${key}" ${count?'':'disabled'}><div class="choice-icon">${count}</div><strong>${esc(label)}</strong><p>${desc}</p></button>`).join('')}</div>${!total?'<div class="field-error">当前范围没有可测试用例，请先确认用例或选择其他范围。</div>':''}</div>${sandbox?`<div class="field full"><label class="check-item"><input class="check" type="checkbox" data-run-field="sandboxConfirmed" ${state.runForm.sandboxConfirmed?'checked':''}><span class="check-copy"><strong>已确认测试账号和权限</strong><span>只连接专门测试系统，不连接正在服务真实客户的系统。</span></span></label></div>`:''}</div>`;
+      return `<div class="overlay"><div class="modal-wrap"><section class="modal" role="dialog" aria-modal="true"><div class="drawer-head"><div class="drawer-title"><h2>${scope==='set'?'运行评测集':'新建测试任务'}</h2><p>${agent.name} · 只测试当前草稿 · 预计测试 ${total} 个客户问题</p></div><button class="icon-btn" data-action="close-overlay">${icon('close',16)}</button></div><div class="drawer-body">${body}</div><div class="drawer-foot"><button class="btn" data-action="close-overlay">取消</button><span class="spacer"></span><button class="btn primary" data-action="start-run" ${canStart?'':'disabled'}>${scope==='set'?'开始评测':'开始测试'}</button></div></section></div></div>`;
     }
 
     function renderRunProgress() {
@@ -1984,6 +2073,8 @@
       if(type==='test') return renderTestDrawer(id);
       if(type==='problem') return renderProblemDrawer(id);
       if(type==='rule') return renderRuleDrawer();
+      if(type==='set-editor') return renderSetEditor();
+      if(type==='set-detail') return renderSetDrawer(id);
       if(type==='run-modal') return renderRunModal();
       if(type==='run-progress') return renderRunProgress();
       if(type==='trial-result') return renderTrialDrawer();
@@ -2006,6 +2097,10 @@
 
     function casesForScope(scope) {
       if(scope==='selected') return eligibleTests().filter(c=>state.selectedTests.has(c.id));
+      if(scope==='set') {
+        const set=currentSets().find(item=>item.id===state.runForm.setId);
+        return set?(set.caseIds||[]).map(getCase).filter(test=>test?.status==='ready'):[];
+      }
       return eligibleTests();
     }
 
@@ -2021,7 +2116,7 @@
       clearInterval(startSimulation.timer);
       const total=options.total||options.caseIds?.length||1;
       state.activeJob={kind,agentId:state.agentId,total,caseIds:options.caseIds||[],caseId:options.caseId||null,problemId:options.problemId||null,
-        originRunId:options.originRunId||null,label:options.label||'测试任务',comparisonMode:options.comparisonMode||'draft-only',returnOverlay:state.overlay?clone(state.overlay):null};
+        originRunId:options.originRunId||null,setId:options.setId||null,label:options.label||'测试任务',comparisonMode:options.comparisonMode||'draft-only',returnOverlay:state.overlay?clone(state.overlay):null};
       state.runProgress=6;state.overlay={type:'run-progress'};render();
       startSimulation.timer=setInterval(()=>{
         state.runProgress=Math.min(100,state.runProgress+17+Math.round(Math.random()*9));render();
@@ -2039,6 +2134,7 @@
         const cases=job.caseIds.map(getCase).filter(Boolean);
         const outcomes=cases.map(c=>['pass','fail','review','error'].includes(c.result)?c.result:'pass');
         const run=createRunFromCases(state.runForm.name||`${currentAgent().draftVersion} 上线前测试`,cases,outcomes,'已完成',job.comparisonMode);
+        if(job.setId){const set=currentSets().find(item=>item.id===job.setId);run.setId=job.setId;run.setName=set?.name||'已删除的评测集';if(set){set.lastRunId=run.id;set.lastRunAt='刚刚';}}
         state.selectedTests.clear();state.route='report';state.overlay=null;state.activeJob=null;showToast('测试完成',`${run.results.length} 个结果已保存，汇总和明细来自同一任务。`);return;
       }
       if(job.kind==='single') {
@@ -2105,7 +2201,7 @@
         const problem=getProblem(originProblemId);if(problem)problem.caseId=saved.id;
         const candidate=originCandidateId?getCandidate(originCandidateId):null;if(candidate){candidate.caseId=saved.id;candidate.problemId=originProblemId;candidate.status='智能体提示词问题';}
       }
-      state.caseDirty=false;state.caseForm=null;state.overlay=null;state.route='tests';state.testTab=ready?'全部':'待确认';
+      state.caseDirty=false;state.caseForm=null;state.overlay=null;state.route='tests';state.testView='cases';state.testTab=ready?'全部':'待确认';
       if(originProblemId)showToast(ready?'智能体问题和测试用例已关联':'用例草稿已保存',ready?`${saved.id} 已可以参加测试；对应线上问题会继续保留处理进度。`:`${saved.id} 已关联线上问题，确认前不会参加正式测试。`);
       else showToast(ready?'测试用例已确认':'草稿已保存',ready?'现在可以参加正式测试；历史任务仍保留旧快照。':'草稿不会进入正式测试，可从“待确认”继续编辑。');
     }
@@ -2138,14 +2234,45 @@
       if(action==='toggle-agent-menu'){state.agentMenu=!state.agentMenu;render();return;}
       if(action==='switch-agent'){
         if(state.route==='case-editor'&&state.caseDirty&&!window.confirm('切换智能体会丢弃当前未保存修改，确定继续吗？'))return;
-        state.agentId=id;state.agentMenu=false;state.selectedTests.clear();state.caseForm=null;state.caseDirty=false;state.generatedForm=null;state.overlay=null;state.route='tests';state.testTab='全部';state.discoveryTab='等待确认';state.discoverySub='继续观察';state.onlineView='issues';state.reportId=currentRuns()[0]?.id||'';window.scrollTo({top:0});render();return;
+        state.agentId=id;state.agentMenu=false;state.selectedTests.clear();state.caseForm=null;state.caseDirty=false;state.setForm=null;state.generatedForm=null;state.overlay=null;state.route='tests';state.testView='cases';state.testTab='全部';state.discoveryTab='等待确认';state.discoverySub='继续观察';state.onlineView='issues';state.reportId=currentRuns()[0]?.id||'';window.scrollTo({top:0});render();return;
       }
       if(action==='close-overlay'){
         if(state.overlay?.type==='run-progress'){showToast('测试仍在进行','请等待完成，或点击取消并保留已完成结果。','warn');return;}
         if(state.overlay?.type==='generated'&&state.generatedDirty&&!window.confirm('用例内容尚未保存，确定放弃这些修改吗？'))return;
-        state.overlay=null;state.generatedForm=null;state.generatedDirty=false;render();return;
+        state.overlay=null;state.setForm=null;state.generatedForm=null;state.generatedDirty=false;render();return;
       }
+      if(action==='test-view'){state.testView=target.dataset.view;state.overlay=null;window.scrollTo({top:0,behavior:'smooth'});render();return;}
       if(action==='test-tab'){state.testTab=target.dataset.tab;render();return;}
+      if(action==='new-set'){
+        state.setCaseQuery='';state.setForm={id:null,name:'',description:'',caseIds:[],owner:'魏策',updated:'刚刚',lastRunId:''};state.overlay={type:'set-editor'};render();return;
+      }
+      if(action==='open-set'){state.overlay={type:'set-detail',id};render();return;}
+      if(action==='edit-set'){
+        event.stopPropagation();const set=currentSets().find(item=>item.id===id);if(!set)return;state.setCaseQuery='';state.setForm=clone(set);state.overlay={type:'set-editor',id};render();return;
+      }
+      if(action==='toggle-set-case'){
+        event.stopPropagation();if(!state.setForm)return;const selected=state.setForm.caseIds||[];state.setForm.caseIds=selected.includes(id)?selected.filter(caseId=>caseId!==id):[...selected,id];render();return;
+      }
+      if(action==='save-set'){
+        const f=state.setForm;if(!f)return;
+        if(!String(f.name||'').trim()){showToast('请填写评测集名称','名称用于后续选择和识别评测任务。','warn');return;}
+        const validIds=(f.caseIds||[]).filter(caseId=>getCase(caseId)?.status==='ready');
+        if(!validIds.length){showToast('请至少选择一条用例','只有已经确认的测试用例可以加入评测集。','warn');return;}
+        const existing=f.id?currentSets().find(item=>item.id===f.id):null;
+        const saved={...clone(f),id:f.id||uid('SET'),name:f.name.trim(),description:String(f.description||'').trim(),caseIds:validIds,updated:'刚刚',owner:f.owner||'魏策'};
+        if(existing)Object.assign(existing,saved);else currentSets().unshift(saved);
+        state.setForm=null;state.overlay={type:'set-detail',id:saved.id};showToast(existing?'评测集已更新':'评测集已创建',`已关联 ${saved.caseIds.length} 条用例，可以直接运行评测。`);return;
+      }
+      if(action==='delete-set'){
+        event.stopPropagation();const list=currentSets(),index=list.findIndex(item=>item.id===id);if(index<0)return;const set=list[index];
+        if(!window.confirm(`确定删除评测集「${set.name}」吗？\n只删除评测集本身，不会删除测试用例和历史测试结果。`))return;
+        list.splice(index,1);state.setForm=null;state.overlay=null;showToast('评测集已删除',`「${set.name}」已删除，关联用例和历史任务仍然保留。`);return;
+      }
+      if(action==='run-set'){
+        event.stopPropagation();const set=currentSets().find(item=>item.id===id);if(!set)return;
+        const cases=(set.caseIds||[]).map(getCase).filter(test=>test?.status==='ready');if(!cases.length){showToast('当前评测集没有可运行用例','请先编辑评测集并加入已经确认的测试用例。','warn');return;}
+        state.runForm={scope:'set',setId:set.id,name:`${set.name} · ${currentAgent().draftVersion}`,caseIds:cases.map(test=>test.id),compareMode:'draft-only',sandboxConfirmed:false};state.overlay={type:'run-modal'};render();return;
+      }
       if(action==='discovery-tab'){state.discoveryTab=target.dataset.tab;render();return;}
       if(action==='discovery-subtab'){state.discoverySub=target.dataset.tab;render();return;}
       if(action==='report-tab'){state.reportTab=target.dataset.tab;render();return;}
@@ -2163,7 +2290,7 @@
         state.caseForm.creationMode=sourceType;
         if(sourceType==='manual-import')Object.assign(state.caseForm,{importCases:[],importFileName:'',importError:''});
         if(sourceType==='history')Object.assign(state.caseForm,{sourceAgentId:productionSourceAgents[0].id,historyRange:'最近 30 天',historyScope:'有明确问题或未解决的通话',historyCount:'5',historyInstruction:'从最近未解决、转人工或系统操作异常的通话中，提取有代表性的客户场景'});
-        if(sourceType==='agent-import')Object.assign(state.caseForm,{otherAgentId:tenantAgentCaseSources[0].id,otherAgentCaseIds:[]});
+        if(sourceType==='agent-import'){state.agentCaseQuery='';Object.assign(state.caseForm,{otherAgentId:tenantAgentCaseSources[0].id,otherAgentSetId:'',otherAgentCaseIds:[]});}
         if(sourceType==='ai-generate')Object.assign(state.caseForm,{aiBrief:'',aiCount:'5'});
         state.caseDirty=false;window.scrollTo({top:0,behavior:'smooth'});render();return;
       }
@@ -2175,7 +2302,7 @@
         const f=state.caseForm,source=productionSourceAgents.find(agent=>agent.id===f.sourceAgentId)||productionSourceAgents[0];
         const count=Math.max(1,Math.min(20,Number(f.historyCount)||5));
         const drafts=Array.from({length:count},(_,index)=>{const draft=historyScenarioDraft(index,source);draft.historySource.range=f.historyRange||'最近 30 天';draft.historySource.scope=f.historyScope;draft.historySource.instruction=f.historyInstruction||'';return draft;});
-        currentTests().unshift(...drafts);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testTab='待确认';window.scrollTo({top:0});showToast(`已生成 ${count} 条场景草稿`,'请逐条核对模拟客户说明、处理正确的条件、变量和模拟系统结果；确认前不会参加正式测试。');return;
+        currentTests().unshift(...drafts);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testView='cases';state.testTab='待确认';window.scrollTo({top:0});showToast(`已生成 ${count} 条场景草稿`,'请逐条核对模拟客户说明、处理正确的条件、变量和模拟系统结果；确认前不会参加正式测试。');return;
       }
       if(action==='copy-import-prompt'){
         const copy=()=>showToast('提示词已复制','可以把业务材料和这段提示词一起交给其他 AI，生成 JSON 文件。');
@@ -2193,7 +2320,7 @@
       }
       if(action==='import-json-cases'){
         const imported=state.caseForm.importCases||[];if(!imported.length){showToast('没有可导入的用例','请先选择并检查 JSON 文件。','warn');return;}
-        currentTests().unshift(...imported);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testTab='待确认';window.scrollTo({top:0});showToast(`已导入 ${imported.length} 条用例`,'导入内容已进入“待确认”，人工确认后才能参加测试。');return;
+        currentTests().unshift(...imported);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testView='cases';state.testTab='待确认';window.scrollTo({top:0});showToast(`已导入 ${imported.length} 条用例`,'导入内容已进入“待确认”，人工确认后才能参加测试。');return;
       }
       if(action==='toggle-agent-case'){
         const selected=state.caseForm.otherAgentCaseIds||[];state.caseForm.otherAgentCaseIds=selected.includes(id)?selected.filter(item=>item!==id):[...selected,id];render();return;
@@ -2205,13 +2332,14 @@
       }
       if(action==='import-agent-cases'){
         const f=state.caseForm,source=tenantAgentCaseSources.find(agent=>agent.id===f.otherAgentId)||tenantAgentCaseSources[0],selected=f.otherAgentCaseIds||[];
-        const drafts=source.cases.map((item,index)=>({item,index})).filter(({index})=>selected.includes(`${source.id}-${index}`)).map(({item})=>draftFromAgentCase(item,source));
+        const set=(source.sets||[]).find(item=>item.id===f.otherAgentSetId)||null;
+        const drafts=source.cases.map((item,index)=>({item,index})).filter(({index})=>selected.includes(`${source.id}-${index}`)).map(({item})=>draftFromAgentCase(item,source,set&&set.name));
         if(!drafts.length){showToast('还没有选择用例','至少选择一条用例后再导入。','warn');return;}
-        currentTests().unshift(...drafts);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testTab='待确认';window.scrollTo({top:0});showToast(`已从 ${source.name} 导入 ${drafts.length} 条用例`,'导入的是独立副本，请逐条核对后确认。');return;
+        currentTests().unshift(...drafts);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testView='cases';state.testTab='待确认';window.scrollTo({top:0});showToast(`已从 ${source.name} 导入 ${drafts.length} 条用例`,'导入的是独立副本，请逐条核对后确认。');return;
       }
       if(action==='generate-ai-cases'){
         const f=state.caseForm,count=Math.max(1,Math.min(20,Number(f.aiCount)||5)),drafts=Array.from({length:count},(_,index)=>aiGeneratedDraft(index,f.aiBrief||''));
-        currentTests().unshift(...drafts);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testTab='待确认';window.scrollTo({top:0});showToast(`AI 已生成 ${count} 条用例`,'生成内容已进入“待确认”，请检查后再参加测试。');return;
+        currentTests().unshift(...drafts);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testView='cases';state.testTab='待确认';window.scrollTo({top:0});showToast(`AI 已生成 ${count} 条用例`,'生成内容已进入“待确认”，请检查后再参加测试。');return;
       }
       if(action==='case-type'){state.caseForm.type=target.dataset.type;state.caseDirty=true;render();return;}
       if(action==='reset-case-type'){
@@ -2236,7 +2364,7 @@
       if(action==='run-scope'){state.runForm.scope=target.dataset.scope;const suffix=target.dataset.scope==='selected'?'所选用例':'全部用例';state.runForm.name=`${currentAgent().draftVersion} 上线前${suffix}测试`;state.runForm.sandboxConfirmed=false;render();return;}
       if(action==='start-run'){
         const cases=casesForScope(state.runForm.scope);if(!cases.length){showToast('没有可测试用例','请调整范围或先确认用例。','warn');return;}
-          state.runForm.caseIds=cases.map(c=>c.id);startSimulation('new-run',{total:cases.length,caseIds:state.runForm.caseIds,label:state.runForm.name,comparisonMode:state.runForm.compareMode});return;
+          state.runForm.caseIds=cases.map(c=>c.id);startSimulation('new-run',{total:cases.length,caseIds:state.runForm.caseIds,setId:state.runForm.setId||null,label:state.runForm.name,comparisonMode:state.runForm.compareMode});return;
       }
       if(action==='cancel-run'){cancelSimulation();return;}
       if(action==='retest-case'){const c=getCase(id);if(c?.status==='ready')startSimulation('single',{caseId:id,total:1,label:`单条复测：${c.name}`});return;}
@@ -2246,7 +2374,7 @@
         if(!window.confirm(`确定删除用例「${c.name}」吗？\n删除后不能再参加测试；历史任务和报告仍保留当时的用例快照。`))return;
         const list=currentTests(),index=list.findIndex(x=>x.id===id);
         if(index<0)return;
-        list.splice(index,1);state.selectedTests.delete(id);
+        list.splice(index,1);state.selectedTests.delete(id);currentSets().forEach(set=>{set.caseIds=(set.caseIds||[]).filter(caseId=>caseId!==id);});
         if(state.overlay&&state.overlay.id===id)state.overlay=null;
         showToast('用例已删除',`「${c.name}」已从当前智能体移除，历史测试结果未受影响。`);return;
       }
@@ -2297,7 +2425,7 @@
         currentTests().unshift(test);
         const p={id:uid('BC'),title:c.title,category:c.category,problemType:'agent',severity:c.risk,status:'修改中',target:'回答要求或系统操作',targetVersion:currentAgent().draftVersion,source:c.id,caseId:test.id,reason:c.reason,ruleType:c.ruleType,ruleVersion:c.ruleVersion};
         currentDB().problems.unshift(p);c.status='已确认';c.caseId=test.id;c.problemId=p.id;
-        state.generatedForm=null;state.generatedDirty=false;state.overlay=null;state.route='tests';state.testTab='全部';showToast('问题和测试用例已一起保存',`已生成 ${test.id} 和 ${p.id}；具体判断条件只保留在测试用例中。`);return;
+        state.generatedForm=null;state.generatedDirty=false;state.overlay=null;state.route='tests';state.testView='cases';state.testTab='全部';showToast('问题和测试用例已一起保存',`已生成 ${test.id} 和 ${p.id}；具体判断条件只保留在测试用例中。`);return;
       }
 
       if(action==='problem-to-case'){
@@ -2309,7 +2437,7 @@
         const p=getProblem(id),f=state.generatedForm;f.criteria=f.criteriaText.split('\n').map(x=>x.trim()).filter(Boolean);f.avoid=f.avoidText.split('\n').map(x=>x.trim()).filter(Boolean);
         if(!f.name.trim()||!f.interactionPrompt?.trim()||!f.criteria.length){showToast('请补充必填内容','用例名称、完整提示词和至少一条事情办成的条件不能为空。','warn');return;}
         const test=Object.assign(blankCase('scenario'),clone(f),{id:uid('TC'),type:'scenario',creationMode:'manual',status:'ready',result:'none',baselineResult:'fail',source:'线上问题',updated:'刚刚'});delete test.problemId;delete test.criteriaText;delete test.avoidText;
-        currentTests().unshift(test);p.caseId=test.id;state.generatedForm=null;state.generatedDirty=false;state.overlay=null;state.route='tests';state.testTab='全部';showToast('正式问题已整理为测试用例',`${test.id} 可先用于草稿复测，确认后可以在测试用例里参加正式测试。`);return;
+        currentTests().unshift(test);p.caseId=test.id;state.generatedForm=null;state.generatedDirty=false;state.overlay=null;state.route='tests';state.testView='cases';state.testTab='全部';showToast('正式问题已整理为测试用例',`${test.id} 可先用于草稿复测，确认后可以在测试用例里参加正式测试。`);return;
       }
       if(action==='open-test'){openTest(id);return;}
       if(action==='open-result'){openTest(id,target.dataset.resultId);return;}
@@ -2385,13 +2513,37 @@
 
     document.addEventListener('input',event=>{
       const el=event.target,value=el.type==='checkbox'?el.checked:el.value;
+      if(el.dataset.agentCaseSearch!==undefined){
+        const pos=el.selectionStart||0;
+        state.agentCaseQuery=value;
+        if(event.isComposing)return;
+        render();
+        const box=document.querySelector('[data-agent-case-search]');
+        if(box){box.focus();try{box.setSelectionRange(pos,pos);}catch(err){}}
+        return;
+      }
+      if(el.dataset.setSearch!==undefined){
+        const pos=el.selectionStart||0;
+        state.setCaseQuery=value;
+        if(event.isComposing)return;
+        render();
+        const box=document.querySelector('[data-set-search]');
+        if(box){box.focus();try{box.setSelectionRange(pos,pos);}catch(err){}}
+        return;
+      }
       const caseField=el.dataset.caseField;
       if(caseField&&state.caseForm){
         if(caseField==='criteriaText')state.caseForm.criteria=value.split('\n').map(x=>x.trim()).filter(Boolean);
         else if(caseField==='avoidText')state.caseForm.avoid=value.split('\n').map(x=>x.trim()).filter(Boolean);
         else state.caseForm[caseField]=value;
-        if(caseField==='otherAgentId')state.caseForm.otherAgentCaseIds=[];
+        if(caseField==='otherAgentId'){state.caseForm.otherAgentCaseIds=[];state.caseForm.otherAgentSetId='';state.agentCaseQuery='';}
         state.caseDirty=true;
+        if(caseField==='otherAgentSetId'){
+          const src=tenantAgentCaseSources.find(agent=>agent.id===state.caseForm.otherAgentId)||tenantAgentCaseSources[0];
+          const set=(src.sets||[]).find(item=>item.id===value);
+          state.caseForm.otherAgentCaseIds=set?set.caseIndexes.map(index=>src.id+'-'+index):[];
+          render();return;
+        }
         if(['sourceAgentId','historyCount','otherAgentId','aiCount'].includes(caseField)){render();return;}
       }
       const variableField=el.dataset.variableField;
@@ -2400,6 +2552,8 @@
       if(toolField&&state.caseForm){const tool=state.caseForm.tools.find(t=>t.id===el.dataset.id);if(tool)tool[toolField]=value;state.caseDirty=true;}
       const generatedField=el.dataset.generatedField;
       if(generatedField&&state.generatedForm){state.generatedForm[generatedField]=value;state.generatedDirty=true;if(generatedField==='type'){render();return;}}
+      const setField=el.dataset.setField;
+      if(setField&&state.setForm)state.setForm[setField]=value;
       const reviewField=el.dataset.reviewField;
       if(reviewField)state.reviewForm[reviewField]=value;
       const problemField=el.dataset.problemField;
