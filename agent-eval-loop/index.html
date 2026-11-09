@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>智能体测试与线上问题 · 交互原型 V0.10</title>
+  <title>智能体测试与线上问题 · 交互原型 V0.11</title>
   <!--
-    PROTOTYPE — 单智能体测试与线上问题工作区 V0.10。
+    PROTOTYPE — 单智能体测试与线上问题工作区 V0.11。
     本版验证三个问题：只保留多轮客户场景；线上候选按四种人工结论分类筛选；确认智能体问题后直接进入整页创建用例。
     所有状态只保存在当前页面内存，不连接真实生产数据。
   -->
@@ -1350,7 +1350,7 @@
       return {
         id:null,type:'scenario',creationMode:'manual',name:'',status:'draft',source:'人工创建',
         question:'',expectedAnswer:'',answerSource:'',interactionPrompt:'',maxTurns:'10',
-        variables:[],tools:[],criteria:[],avoid:[]
+        variables:[],tools:[],criteria:[],avoid:[],setIds:[]
       };
     }
 
@@ -1384,6 +1384,31 @@
       c.source=setName?'从 '+source.name+' 的评测集「'+setName+'」导入':'从 '+source.name+' 导入';
       c.criteria=clone(item.criteria||[]);c.avoid=clone(item.avoid||[]);
       return c;
+    }
+
+    function syncCaseSets(caseId,setIds) {
+      const want=new Set(setIds||[]);
+      currentSets().forEach(set=>{
+        set.caseIds=set.caseIds||[];
+        const has=set.caseIds.includes(caseId);
+        if(want.has(set.id)&&!has)set.caseIds.push(caseId);
+        if(!want.has(set.id)&&has)set.caseIds=set.caseIds.filter(item=>item!==caseId);
+      });
+    }
+
+    function attachCasesToSets(cases,setIds) {
+      const want=setIds||[];if(!want.length||!cases.length)return;
+      const sets=currentSets();
+      want.forEach(setId=>{
+        const set=sets.find(item=>item.id===setId);if(!set)return;
+        set.caseIds=set.caseIds||[];
+        cases.forEach(test=>{if(test&&test.id&&!set.caseIds.includes(test.id))set.caseIds.push(test.id);});
+      });
+    }
+
+    function renderSetPicker(f) {
+      const sets=currentSets(),picked=new Set(f.setIds||[]);
+      return `<section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('tests',16)}</div><div class="editor-section-copy"><h2>加入评测集</h2><p>可以同时加入多个评测集。已确认的用例会立即参与运行，草稿阶段先占位，确认后自动生效。</p></div><span class="section-meta">已选 ${picked.size} 个</span></div><div class="editor-section-body">${sets.length?`<div class="tool-stack">${sets.map(set=>{const checked=picked.has(set.id);return `<label class="check-item"><input class="check" type="checkbox" data-action="toggle-case-set" data-id="${set.id}" ${checked?'checked':''}><span class="check-copy"><strong>${esc(set.name)}</strong><span>${esc(set.id)} · 当前 ${(set.caseIds||[]).length} 条用例</span></span>${checked?badge('已加入','pass'):''}</label>`;}).join('')}</div>`:`<div class="empty"><p>当前还没有评测集。可以先到「测试用例 → 评测集」新建一个，再回来加入。</p></div>`}</div></section>`;
     }
 
     function sourceLabel(source) {
@@ -1425,6 +1450,24 @@
       ];
       const t=templates[index%templates.length],c=blankCase('scenario');
       Object.assign(c,{id:uid('TC'),name:t.name,status:'pending',result:'none',source:`生产通话 · ${source.name}`,interactionPrompt:t.prompt,criteria:clone(t.criteria),avoid:clone(t.avoid),updated:'刚刚',historySource:{agentId:source.id,agentName:source.name,version:source.version,range:'最近 30 天',note:'从多通真实通话中抽取客户目标、已知信息、行为变化和结束条件；未复制后续固定台词。'}});
+      return c;
+    }
+
+    function aiGeneratedDraft(index,brief) {
+      const topics=[
+        {name:'报价边界与到店邀约',goal:'客户想了解 A4L 的落地价，但明显不愿意到店',detail:'先询问价格和近期优惠；被邀请到店时说明不方便，要求线上给一个价格范围；只有在对方说明报价依据后才提供预算。'},
+        {name:'试驾预约改期',goal:'客户原定周六试驾，需要改到周日',detail:'提供原预约手机号并说明改期原因；追问改期是否成功；如果系统异常，会要求重试或人工处理。'},
+        {name:'库存与交付时间咨询',goal:'客户关心 Q5L 的现车情况和交付周期',detail:'询问是否有现车、可选颜色、多久能提车；对方回答需要确认时会继续追问具体时间。'},
+        {name:'客户拒绝留资但继续咨询',goal:'客户只想先了解配置和价格，不愿留下手机号',detail:'明确拒绝留资，但仍继续问车型差异；如果被反复索要联系方式，会表达不满并结束对话。'},
+        {name:'多次未解决后要求转人工',goal:'客户的问题此前已经咨询两次仍未解决',detail:'先简要说明此前经历并表达不满；如果对方继续重复询问已经说过的内容，会明确要求转人工，并追问转接后多久联系。'}
+      ];
+      const t=topics[index%topics.length],c=blankCase('scenario'),briefText=String(brief||'').trim();
+      Object.assign(c,{
+        id:uid('TC'),name:t.name,status:'pending',result:'none',source:'AI 生成',updated:'刚刚',
+        interactionPrompt:`你是一位正在咨询奥迪车型的客户，本次要办的事情是：${t.goal}。${t.detail}${briefText?`这一轮生成的重点是：${briefText}。`:''}根据智能体的实际回复自然推进，不要一次说完所有信息；收到明确结果或合理下一步后结束对话。`,
+        criteria:[`围绕「${t.name}」给出明确处理结果`,'只使用客户已经提供的信息和真实系统返回','给出客户可以直接执行的下一步'],
+        avoid:['不能编造价格、库存或预约结果','不能重复询问客户已经提供的信息','没有成功回执时不能声称已经办成']
+      });
       return c;
     }
 
@@ -1735,7 +1778,7 @@
       const pending=data.candidates.filter(c=>c.status==='待复核').length;
       const drafts=data.tests.filter(t=>t.status==='pending'||t.status==='draft').length;
       return `<aside class="sidebar">
-        <div class="brand"><div class="brand-mark"><span></span></div><div>智能体测试<span class="brand-sub">V0.10 · 用例与评测集</span></div></div>
+        <div class="brand"><div class="brand-mark"><span></span></div><div>智能体测试<span class="brand-sub">V0.11 · 用例与评测集</span></div></div>
         <div class="agent-switcher">
           <button class="agent-card" data-action="toggle-agent-menu" aria-expanded="${state.agentMenu}"><span class="agent-card-top"><span class="agent-avatar">${agent.avatar}</span><span style="min-width:0"><span class="agent-name">${agent.name}</span><span class="agent-meta"><span class="live-dot ${agent.hasProduction?'':'draft'}"></span>${agent.meta}</span></span><span style="margin-left:auto">${icon('chevronDown',14)}</span></span></button>
           ${state.agentMenu?`<div class="agent-menu"><div class="agent-menu-title">切换智能体</div>${agents.map(a=>`<button class="agent-option ${a.id===agent.id?'active':''}" data-action="switch-agent" data-id="${a.id}"><div class="agent-avatar" style="width:30px;height:30px">${a.avatar}</div><div class="agent-option-copy"><strong>${a.name}</strong><span>${a.meta}</span></div><span class="agent-status ${a.hasProduction?'':'draft'}">${a.status}</span></button>`).join('')}</div>`:''}
@@ -1789,7 +1832,7 @@
       const selected=new Set(f.caseIds||[]),tests=currentTests(),ready=tests.filter(test=>test.status==='ready');
       const q=String(state.setCaseQuery||'').trim(),kw=q.toLowerCase();
       const shown=kw?tests.filter(test=>String(test.name||'').toLowerCase().includes(kw)||String(test.id||'').toLowerCase().includes(kw)):tests;
-      const body=`<div class="form-grid"><div class="field full"><label>评测集名称 *</label><input class="input" data-set-field="name" value="${esc(f.name||'')}" placeholder="例如：上线前核心评测集"></div><div class="field full"><label>用途说明</label><textarea class="textarea" data-set-field="description" placeholder="说明这组用例在什么情况下运行，以及主要覆盖哪些业务问题">${esc(f.description||'')}</textarea></div><div class="field full"><label>选择测试用例 *</label><span class="hint">只有已经确认的用例可以加入评测集。当前已选择 ${selected.size} 条。</span><div style="margin-top:10px"><input class="input" data-set-search value="${esc(state.setCaseQuery||'')}" placeholder="搜索用例名称或编号"></div><div class="set-case-list" style="margin-top:8px">${shown.map(test=>{const canUse=test.status==='ready',checked=selected.has(test.id);return `<label class="check-item"><input class="check" type="checkbox" data-action="toggle-set-case" data-id="${test.id}" ${checked?'checked':''} ${canUse?'':'disabled'}><span class="check-copy"><strong>${esc(test.name)}</strong><span>${esc(test.id)} · ${canUse?'已确认，可以运行':'尚未确认，暂时不能加入评测集'}</span></span>${badge(canUse?'已确认':'待确认',canUse?'pass':'review')}</label>`;}).join('')||`<div class="empty"><p>${kw?`没有匹配“${esc(q)}”的用例。`:'当前还没有测试用例。'}</p></div>`}</div></div></div>`;
+      const body=`<div class="form-grid"><div class="field full"><label>评测集名称 *</label><input class="input" data-set-field="name" value="${esc(f.name||'')}" placeholder="例如：上线前核心评测集"></div><div class="field full"><label>用途说明</label><textarea class="textarea" data-set-field="description" placeholder="说明这组用例在什么情况下运行，以及主要覆盖哪些业务问题">${esc(f.description||'')}</textarea></div><div class="field full"><label>选择测试用例 *</label><span class="hint">已确认的用例可以直接勾选；待确认的用例会先占位，确认后自动参与运行。当前已选择 ${selected.size} 条。</span><div style="margin-top:10px"><input class="input" data-set-search value="${esc(state.setCaseQuery||'')}" placeholder="搜索用例名称或编号"></div><div class="set-case-list" style="margin-top:8px">${shown.map(test=>{const canUse=test.status==='ready',checked=selected.has(test.id);return `<label class="check-item"><input class="check" type="checkbox" data-action="toggle-set-case" data-id="${test.id}" ${checked?'checked':''} ${canUse||checked?'':'disabled'}><span class="check-copy"><strong>${esc(test.name)}</strong><span>${esc(test.id)} · ${canUse?'已确认，可以运行':'尚未确认，暂时不能加入评测集'}</span></span>${badge(canUse?'已确认':'待确认',canUse?'pass':'review')}</label>`;}).join('')||`<div class="empty"><p>${kw?`没有匹配“${esc(q)}”的用例。`:'当前还没有测试用例。'}</p></div>`}</div></div></div>`;
       const foot=`<button class="btn ghost" data-action="close-overlay">取消</button><span class="spacer"></span><span class="section-meta">${selected.size} / ${ready.length} 条已确认用例</span><button class="btn primary" data-action="save-set">${f.id?'保存修改':'创建评测集'}</button>`;
       return drawerShell(f.id?'编辑评测集':'新建评测集',f.id?`${f.id} · 修改只影响后续评测`:'选择一组可重复运行的测试用例',body,foot,true);
     }
@@ -1894,7 +1937,7 @@
 
       if(!editing&&f.creationMode==='manual-import') {
         const imported=f.importCases||[];
-        return `<div class="page editor-page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-action="back-to-case-source">← 重新选择创建方式</button><h1 style="margin-top:9px">手动导入用例</h1><p class="page-sub">先把下面的提示词交给其他 AI 生成 JSON 文件，再把文件导入这里。</p></div><div class="page-actions">${badge('JSON 批量导入','accent')}${badge(imported.length?`已识别 ${imported.length} 条`:'等待选择文件',imported.length?'success':'review')}</div></div><div class="editor-layout"><div class="editor-main"><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('spark',16)}</div><div class="editor-section-copy"><h2>1. 复制给其他 AI 的提示词</h2><p>把业务资料连同这段提示词一起发给任意 AI，它会按本页面可识别的格式生成文件内容。</p></div><button class="btn small" data-action="copy-import-prompt">${icon('copy',13)}复制提示词</button></div><div class="editor-section-body"><textarea class="textarea" style="min-height:240px" readonly>${esc(manualImportPrompt)}</textarea><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn small" data-action="download-json-template">下载 JSON 模板</button><button class="btn ghost small" data-action="load-import-example">查看示例导入结果</button></div></div></section><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('copy',16)}</div><div class="editor-section-copy"><h2>2. 导入 JSON 文件</h2><p>系统会先检查格式并展示识别结果，不会直接加入正式测试。</p></div></div><div class="editor-section-body"><label class="field full"><span>选择 JSON 文件</span><input class="input" type="file" accept=".json,application/json" data-case-import-file><span class="hint">${f.importFileName?`已读取：${esc(f.importFileName)}`:'仅支持 .json 文件；文件中可包含一条或多条用例。'}</span></label>${f.importError?`<div class="notice warn" style="margin-top:12px"><span>${icon('issues',16)}</span><div><strong>文件暂时无法导入</strong><p>${esc(f.importError)}</p></div></div>`:''}${imported.length?`<div class="card card-pad" style="margin-top:14px"><strong>已识别 ${imported.length} 条用例</strong><div style="margin-top:10px">${imported.slice(0,5).map(item=>`<div class="gate-line"><span>${esc(item.name)}</span><strong>${item.criteria.length} 条判断条件</strong></div>`).join('')}${imported.length>5?`<p class="page-sub">另有 ${imported.length-5} 条未展开显示</p>`:''}</div></div>`:'<div class="empty" style="margin-top:14px"><p>选择文件后，这里会显示识别出的用例。</p></div>'}</div></section><div class="editor-savebar"><button class="btn ghost" data-action="back-to-case-source">取消</button><span class="spacer"></span><button class="btn primary" data-action="import-json-cases" ${imported.length?'':'disabled'}>导入 ${imported.length||0} 条用例</button></div></div><aside class="editor-aside"><div class="notice success"><span>${icon('shield',16)}</span><div><strong>导入后先人工确认</strong><p>导入内容会进入“待确认”，不会自动参加测试。</p></div></div><section class="card aside-card"><div class="aside-title">格式检查</div><div class="gate-line"><span>用例名称</span><strong>必须填写</strong></div><div class="gate-line"><span>客户模拟提示词</span><strong>必须填写</strong></div><div class="gate-line"><span>判断条件</span><strong>建议填写</strong></div><div class="gate-line"><span>变量与模拟调用</span><strong>可以为空</strong></div></section></aside></div></div>`;
+        return `<div class="page editor-page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-action="back-to-case-source">← 重新选择创建方式</button><h1 style="margin-top:9px">手动导入用例</h1><p class="page-sub">先把下面的提示词交给其他 AI 生成 JSON 文件，再把文件导入这里。</p></div><div class="page-actions">${badge('JSON 批量导入','accent')}${badge(imported.length?`已识别 ${imported.length} 条`:'等待选择文件',imported.length?'success':'review')}</div></div><div class="editor-layout"><div class="editor-main"><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('spark',16)}</div><div class="editor-section-copy"><h2>1. 复制给其他 AI 的提示词</h2><p>把业务资料连同这段提示词一起发给任意 AI，它会按本页面可识别的格式生成文件内容。</p></div><button class="btn small" data-action="copy-import-prompt">${icon('copy',13)}复制提示词</button></div><div class="editor-section-body"><textarea class="textarea" style="min-height:240px" readonly>${esc(manualImportPrompt)}</textarea><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn small" data-action="download-json-template">下载 JSON 模板</button><button class="btn ghost small" data-action="load-import-example">查看示例导入结果</button></div></div></section><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('copy',16)}</div><div class="editor-section-copy"><h2>2. 导入 JSON 文件</h2><p>系统会先检查格式并展示识别结果，不会直接加入正式测试。</p></div></div><div class="editor-section-body"><label class="field full"><span>选择 JSON 文件</span><input class="input" type="file" accept=".json,application/json" data-case-import-file><span class="hint">${f.importFileName?`已读取：${esc(f.importFileName)}`:'仅支持 .json 文件；文件中可包含一条或多条用例。'}</span></label>${f.importError?`<div class="notice warn" style="margin-top:12px"><span>${icon('issues',16)}</span><div><strong>文件暂时无法导入</strong><p>${esc(f.importError)}</p></div></div>`:''}${imported.length?`<div class="card card-pad" style="margin-top:14px"><strong>已识别 ${imported.length} 条用例</strong><div style="margin-top:10px">${imported.slice(0,5).map(item=>`<div class="gate-line"><span>${esc(item.name)}</span><strong>${item.criteria.length} 条判断条件</strong></div>`).join('')}${imported.length>5?`<p class="page-sub">另有 ${imported.length-5} 条未展开显示</p>`:''}</div></div>`:'<div class="empty" style="margin-top:14px"><p>选择文件后，这里会显示识别出的用例。</p></div>'}</div></section>${renderSetPicker(f)}<div class="editor-savebar"><button class="btn ghost" data-action="back-to-case-source">取消</button><span class="spacer"></span><button class="btn primary" data-action="import-json-cases" ${imported.length?'':'disabled'}>导入 ${imported.length||0} 条用例</button></div></div><aside class="editor-aside"><div class="notice success"><span>${icon('shield',16)}</span><div><strong>导入后先人工确认</strong><p>导入内容会进入“待确认”，不会自动参加测试。</p></div></div><section class="card aside-card"><div class="aside-title">格式检查</div><div class="gate-line"><span>用例名称</span><strong>必须填写</strong></div><div class="gate-line"><span>客户模拟提示词</span><strong>必须填写</strong></div><div class="gate-line"><span>判断条件</span><strong>建议填写</strong></div><div class="gate-line"><span>变量与模拟调用</span><strong>可以为空</strong></div></section></aside></div></div>`;
       }
 
       if(!editing&&f.creationMode==='agent-import') {
@@ -1905,12 +1948,12 @@
         const q=String(state.agentCaseQuery||'').trim(),kw=q.toLowerCase();
         const rows=source.cases.map((item,index)=>({item,index})).filter(({item})=>!kw||String(item.name||'').toLowerCase().includes(kw)||String(item.prompt||'').toLowerCase().includes(kw));
         const allSelected=source.cases.length>0&&selected.length===source.cases.length;
-        return `<div class="page editor-page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-action="back-to-case-source">← 重新选择创建方式</button><h1 style="margin-top:9px">从其他智能体导入</h1><p class="page-sub">选择租户内的智能体，可以逐条挑选用例，也可以直接导入它已经维护好的评测集。</p></div><div class="page-actions">${badge(`${source.status} · ${source.version}`,'accent')}${badge(`已选 ${selected.length} 条`,selected.length?'success':'review')}</div></div><div class="editor-layout no-aside"><div class="editor-main"><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('agents',16)}</div><div class="editor-section-copy"><h2>选择用例来源</h2><p>这里只读取其他智能体已经维护的测试用例和评测集，不读取它的生产通话。</p></div></div><div class="editor-section-body"><div style="display:flex;gap:16px;flex-wrap:wrap"><div class="field" style="flex:1 1 300px;max-width:460px"><label>租户内的智能体</label><select class="select" data-case-field="otherAgentId">${tenantAgentCaseSources.map(agent=>`<option value="${agent.id}" ${source.id===agent.id?'selected':''}>${esc(agent.name)} · ${agent.version} · ${agent.status}</option>`).join('')}</select></div><div class="field" style="flex:1 1 240px;max-width:320px"><label>来源范围</label><select class="select" data-case-field="otherAgentSetId"><option value="">全部用例 · ${source.cases.length} 条</option>${sourceSets.map(set=>`<option value="${set.id}" ${f.otherAgentSetId===set.id?'selected':''}>评测集 · ${esc(set.name)} · ${set.caseIndexes.length} 条</option>`).join('')}</select>${activeSet?'':'<span class="hint">选择评测集会一次性勾选它包含的用例。</span>'}</div></div></div></section><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('tests',16)}</div><div class="editor-section-copy"><h2>选择测试用例</h2><p>导入的是一份独立副本，后续修改不会影响来源智能体。</p></div><label style="margin-left:auto;flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)"><input class="check" type="checkbox" data-action="toggle-all-agent-cases" ${allSelected?'checked':''} ${source.cases.length?'':'disabled'}>全选</label></div><div class="editor-section-body"><input class="input" data-agent-case-search value="${esc(state.agentCaseQuery||'')}" placeholder="搜索用例名称或描述">${activeSet?`<span class="hint" style="display:block;margin-top:8px">已按评测集「${esc(activeSet.name)}」选中 ${activeSet.caseIndexes.length} 条，可以继续手动增减。</span>`:''}<div class="tool-stack" style="margin-top:10px">${rows.map(({item,index})=>{const caseId=`${source.id}-${index}`,checked=selected.includes(caseId);return `<label class="check-item"><input class="check" type="checkbox" data-action="toggle-agent-case" data-id="${caseId}" ${checked?'checked':''}><span class="check-copy"><strong>${esc(item.name)}</strong><span>${esc(item.prompt)}</span></span></label>`;}).join('')||`<div class="empty"><p>${kw?`没有匹配“${esc(q)}”的用例。`:'这个智能体还没有可导入的用例。'}</p></div>`}</div></div></section><div class="editor-savebar"><button class="btn ghost" data-action="back-to-case-source">取消</button><span class="spacer"></span><button class="btn primary" data-action="import-agent-cases" ${selected.length?'':'disabled'}>导入 ${selected.length} 条用例</button></div></div></div></div>`;
+        return `<div class="page editor-page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-action="back-to-case-source">← 重新选择创建方式</button><h1 style="margin-top:9px">从其他智能体导入</h1><p class="page-sub">选择租户内的智能体，可以逐条挑选用例，也可以直接导入它已经维护好的评测集。</p></div><div class="page-actions">${badge(`${source.status} · ${source.version}`,'accent')}${badge(`已选 ${selected.length} 条`,selected.length?'success':'review')}</div></div><div class="editor-layout no-aside"><div class="editor-main"><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('agents',16)}</div><div class="editor-section-copy"><h2>选择用例来源</h2><p>这里只读取其他智能体已经维护的测试用例和评测集，不读取它的生产通话。</p></div></div><div class="editor-section-body"><div style="display:flex;gap:16px;flex-wrap:wrap"><div class="field" style="flex:1 1 300px;max-width:460px"><label>租户内的智能体</label><select class="select" data-case-field="otherAgentId">${tenantAgentCaseSources.map(agent=>`<option value="${agent.id}" ${source.id===agent.id?'selected':''}>${esc(agent.name)} · ${agent.version} · ${agent.status}</option>`).join('')}</select></div><div class="field" style="flex:1 1 240px;max-width:320px"><label>来源范围</label><select class="select" data-case-field="otherAgentSetId"><option value="">全部用例 · ${source.cases.length} 条</option>${sourceSets.map(set=>`<option value="${set.id}" ${f.otherAgentSetId===set.id?'selected':''}>评测集 · ${esc(set.name)} · ${set.caseIndexes.length} 条</option>`).join('')}</select>${activeSet?'':'<span class="hint">选择评测集会一次性勾选它包含的用例。</span>'}</div></div></div></section><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('tests',16)}</div><div class="editor-section-copy"><h2>选择测试用例</h2><p>导入的是一份独立副本，后续修改不会影响来源智能体。</p></div><label style="margin-left:auto;flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)"><input class="check" type="checkbox" data-action="toggle-all-agent-cases" ${allSelected?'checked':''} ${source.cases.length?'':'disabled'}>全选</label></div><div class="editor-section-body"><input class="input" data-agent-case-search value="${esc(state.agentCaseQuery||'')}" placeholder="搜索用例名称或描述">${activeSet?`<span class="hint" style="display:block;margin-top:8px">已按评测集「${esc(activeSet.name)}」选中 ${activeSet.caseIndexes.length} 条，可以继续手动增减。</span>`:''}<div class="tool-stack" style="margin-top:10px">${rows.map(({item,index})=>{const caseId=`${source.id}-${index}`,checked=selected.includes(caseId);return `<label class="check-item"><input class="check" type="checkbox" data-action="toggle-agent-case" data-id="${caseId}" ${checked?'checked':''}><span class="check-copy"><strong>${esc(item.name)}</strong><span>${esc(item.prompt)}</span></span></label>`;}).join('')||`<div class="empty"><p>${kw?`没有匹配“${esc(q)}”的用例。`:'这个智能体还没有可导入的用例。'}</p></div>`}</div></div></section>${renderSetPicker(f)}<div class="editor-savebar"><button class="btn ghost" data-action="back-to-case-source">取消</button><span class="spacer"></span><button class="btn primary" data-action="import-agent-cases" ${selected.length?'':'disabled'}>导入 ${selected.length} 条用例</button></div></div></div></div>`;
       }
 
       if(!editing&&f.creationMode==='ai-generate') {
         const count=Math.max(1,Math.min(20,Number(f.aiCount)||5));
-        return `<div class="page editor-page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-action="back-to-case-source">← 重新选择创建方式</button><h1 style="margin-top:9px">AI 自动生成用例</h1><p class="page-sub">告诉 AI 想覆盖的业务范围并设置数量，生成结果会先进入“待确认”。</p></div><div class="page-actions">${badge('AI 生成','accent')}${badge(`预计生成 ${count} 条`,'review')}</div></div><div class="editor-layout"><div class="editor-main"><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('spark',16)}</div><div class="editor-section-copy"><h2>设置生成范围</h2><p>业务说明可以留空；留空时会根据当前智能体的配置生成常见客户场景。</p></div></div><div class="editor-section-body"><div class="field full"><label>想生成哪些用例（可选）</label><textarea class="textarea" style="min-height:150px" data-case-field="aiBrief" placeholder="例如：围绕报价、拒绝留资、试驾预约失败和明确要求转人工，覆盖正常流程与异常流程。">${esc(f.aiBrief||'')}</textarea></div><div class="field" style="max-width:320px;margin-top:14px"><label>生成条数</label><input class="input" type="number" min="1" max="20" data-case-field="aiCount" value="${count}"><span class="hint">一次最多生成 20 条，生成后可逐条删除或修改。</span></div></div></section><div class="editor-savebar"><button class="btn ghost" data-action="back-to-case-source">取消</button><span class="spacer"></span><button class="btn primary" data-action="generate-ai-cases">${icon('spark',14)}生成 ${count} 条用例</button></div></div><aside class="editor-aside"><div class="notice warn"><span>${icon('shield',16)}</span><div><strong>AI 生成不等于业务确认</strong><p>生成后需要检查客户设定、判断条件、变量和模拟系统结果。</p></div></div></aside></div></div>`;
+        return `<div class="page editor-page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-action="back-to-case-source">← 重新选择创建方式</button><h1 style="margin-top:9px">AI 自动生成用例</h1><p class="page-sub">告诉 AI 想覆盖的业务范围并设置数量，生成结果会先进入“待确认”。</p></div><div class="page-actions">${badge('AI 生成','accent')}${badge(`预计生成 ${count} 条`,'review')}</div></div><div class="editor-layout"><div class="editor-main"><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('spark',16)}</div><div class="editor-section-copy"><h2>设置生成范围</h2><p>业务说明可以留空；留空时会根据当前智能体的配置生成常见客户场景。</p></div></div><div class="editor-section-body"><div class="field full"><label>想生成哪些用例（可选）</label><textarea class="textarea" style="min-height:150px" data-case-field="aiBrief" placeholder="例如：围绕报价、拒绝留资、试驾预约失败和明确要求转人工，覆盖正常流程与异常流程。">${esc(f.aiBrief||'')}</textarea></div><div class="field" style="max-width:320px;margin-top:14px"><label>生成条数</label><input class="input" type="number" min="1" max="20" data-case-field="aiCount" value="${count}"><span class="hint">一次最多生成 20 条，生成后可逐条删除或修改。</span></div></div></section>${renderSetPicker(f)}<div class="editor-savebar"><button class="btn ghost" data-action="back-to-case-source">取消</button><span class="spacer"></span><button class="btn primary" data-action="generate-ai-cases">${icon('spark',14)}生成 ${count} 条用例</button></div></div><aside class="editor-aside"><div class="notice warn"><span>${icon('shield',16)}</span><div><strong>AI 生成不等于业务确认</strong><p>生成后需要检查客户设定、判断条件、变量和模拟系统结果。</p></div></div></aside></div></div>`;
       }
 
       if(!editing&&f.creationMode==='history') {
@@ -1918,7 +1961,7 @@
         const count=Math.max(1,Math.min(20,Number(f.historyCount)||5));
         return `<div class="page editor-page"><div class="page-head"><div class="page-head-copy"><button class="btn ghost small" data-action="back-to-case-source">← 重新选择创建方式</button><h1 style="margin-top:9px">从生产通话提取用例</h1><p class="page-sub">选择通话来源和范围，由系统生成用例草稿；生成后逐条核对，不直接进入正式测试。</p></div><div class="page-actions">${badge('生产通话 · 只读提取','success')}${badge(`预计生成 ${count} 条草稿`,'review')}</div></div>
         <div class="editor-layout"><div class="editor-main"><section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('discover',16)}</div><div class="editor-section-copy"><h2>告诉系统从哪些通话中提取</h2><p>可用一句业务化的要求缩小范围，也可以只使用下面的筛选条件。</p></div></div><div class="editor-section-body"><div class="field full"><label>想提取什么场景（可选）</label><textarea class="textarea" style="min-height:110px" data-case-field="historyInstruction" placeholder="例如：从最近客户明确要求人工、预约失败或反复追问的问题中，提取能够重复测试的客户场景">${esc(f.historyInstruction||'从最近未解决、转人工或系统操作异常的通话中，提取有代表性的客户场景')}</textarea></div><div class="form-grid" style="margin-top:14px"><div class="field"><label>生产智能体 *</label><select class="select" data-case-field="sourceAgentId">${productionSourceAgents.map(agent=>`<option value="${agent.id}" ${source.id===agent.id?'selected':''}>${esc(agent.name)} · ${agent.version}</option>`).join('')}</select><span class="hint">只读取所选生产智能体的通话历史，不会运行该智能体。</span></div><div class="field"><label>通话时间范围</label><select class="select" data-case-field="historyRange">${['最近 7 天','最近 30 天','最近 90 天'].map(x=>`<option ${f.historyRange===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>生成多少条场景草稿</label><input class="input" type="number" min="1" max="20" data-case-field="historyCount" value="${count}"><span class="hint">系统会合并高度相似的通话，不按每通对话机械生成一条。</span></div></div></div></section>
-        <div class="editor-savebar"><button class="btn ghost" data-action="back-to-case-source">取消</button><span class="spacer"></span><button class="btn primary" data-action="generate-history-cases">${icon('spark',14)}生成 ${count} 条场景草稿</button></div></div>
+        ${renderSetPicker(f)}<div class="editor-savebar"><button class="btn ghost" data-action="back-to-case-source">取消</button><span class="spacer"></span><button class="btn primary" data-action="generate-history-cases">${icon('spark',14)}生成 ${count} 条场景草稿</button></div></div>
         <aside class="editor-aside"><section class="card aside-card"><div class="aside-title">通话来源</div><div class="gate-line"><span>生产智能体</span><strong>${esc(source.name)}</strong></div><div class="gate-line"><span>生产版本</span><strong>${esc(source.version)}</strong></div><div class="gate-line"><span>已有通话</span><strong>${esc(source.calls)} 通</strong></div><div class="gate-line"><span>数据更新</span><strong>${esc(source.lastSync)}</strong></div><p class="page-sub" style="margin-top:10px">${esc(source.description)}</p></section></aside></div></div>`;
       }
 
@@ -1928,7 +1971,7 @@
       <section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('issues',16)}</div><div class="editor-section-copy"><h2>哪些事情不能发生</h2><p>每行一条；出现任意一种，都需要在结果中明确标记。</p></div></div><div class="editor-section-body"><textarea class="textarea" data-case-field="avoidText" placeholder="例如：系统失败时不能声称已经办理成功">${esc((f.avoid||[]).join('\n'))}</textarea></div></section>
       <section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('copy',16)}</div><div class="editor-section-copy"><h2>测试变量</h2><p>定义模拟客户可以使用的客户资料和业务字段。</p></div><button class="btn small" data-action="add-variable">${icon('plus',13)}添加变量</button></div><div class="editor-section-body">${f.variables.length?`<div class="data-table"><div class="data-head"><span>变量名称</span><span>内容类型</span><span>测试值</span><span>必须填写</span><span>隐藏敏感内容</span><span></span></div>${renderVariableRows()}</div>`:'<p class="page-sub">当前没有测试变量；需要时再添加。</p>'}</div></section>
       <section class="card editor-section"><div class="editor-section-head"><div class="editor-section-icon">${icon('settings',16)}</div><div class="editor-section-copy"><h2>模拟系统调用</h2><p>定义测试时调用哪些业务系统，以及返回成功、失败或超时。</p></div><button class="btn small" data-action="add-tool">${icon('plus',13)}添加模拟调用</button></div><div class="editor-section-body"><div class="tool-stack">${f.tools.map(renderToolCard).join('')||'<p class="page-sub">当前用例不涉及模拟系统调用。</p>'}</div></div></section>
-      <div id="case-form-error"></div><div class="editor-savebar"><button class="btn ghost" data-action="leave-editor">取消</button><button class="btn" data-action="save-case-draft">保存草稿</button><span class="spacer"></span><button class="btn" data-action="try-case">${icon('runs',14)}先试一次</button><button class="btn primary" data-action="save-case">${editing&&f.status==='ready'?'保存修改':'保存并确认'}</button></div></div>
+      <div id="case-form-error"></div>${renderSetPicker(f)}<div class="editor-savebar"><button class="btn ghost" data-action="leave-editor">取消</button><button class="btn" data-action="save-case-draft">保存草稿</button><span class="spacer"></span><button class="btn" data-action="try-case">${icon('runs',14)}先试一次</button><button class="btn primary" data-action="save-case">${editing&&f.status==='ready'?'保存修改':'保存并确认'}</button></div></div>
       </div></div>`;
     }
 
@@ -2092,7 +2135,7 @@
 
     function render() {
       document.body.style.overflow=state.overlay?'hidden':'';
-      document.getElementById('app').innerHTML=`<div class="prototype-note">V0.10 · 数据为演示 · 状态仅保存在当前页面</div><div class="app-shell">${renderSidebar()}<main class="main">${renderTopbar()}${renderPage()}</main></div>${renderOverlay()}${renderToast()}`;
+      document.getElementById('app').innerHTML=`<div class="prototype-note">V0.11 · 数据为演示 · 状态仅保存在当前页面</div><div class="app-shell">${renderSidebar()}<main class="main">${renderTopbar()}${renderPage()}</main></div>${renderOverlay()}${renderToast()}`;
     }
 
     function casesForScope(scope) {
@@ -2195,8 +2238,9 @@
       const saved=Object.assign(existing||{},clone(f));
       saved.id=f.id||uid('TC');saved.name=f.name.trim()||'未命名测试用例';saved.status=ready?'ready':'pending';saved.result=existing?.result||'none';saved.updated='刚刚';
       saved.source=existing?.source||f.source||'人工创建';saved.tags=f.tags||saved.name;
-      delete saved.originProblemId;delete saved.originCandidateId;delete saved.returnRoute;
+      delete saved.originProblemId;delete saved.originCandidateId;delete saved.returnRoute;delete saved.setIds;
       if(!existing) currentTests().unshift(saved);
+      syncCaseSets(saved.id,f.setIds||[]);
       if(originProblemId){
         const problem=getProblem(originProblemId);if(problem)problem.caseId=saved.id;
         const candidate=originCandidateId?getCandidate(originCandidateId):null;if(candidate){candidate.caseId=saved.id;candidate.problemId=originProblemId;candidate.status='智能体提示词问题';}
@@ -2279,7 +2323,7 @@
       if(action==='open-report'){state.reportId=id||currentRuns()[0]?.id||'';state.route='report';state.overlay=null;window.scrollTo({top:0});render();return;}
       if(action==='new-case'){state.caseForm=blankCase('scenario');state.caseForm.creationMode='';state.caseDirty=false;state.route='case-editor';state.overlay=null;window.scrollTo({top:0});render();return;}
       if(action==='edit-case'){
-        const c=getCase(id);if(!c)return;state.caseForm=clone(c);state.caseForm.type='scenario';state.caseForm.creationMode='manual';state.caseDirty=false;state.route='case-editor';state.overlay=null;window.scrollTo({top:0});render();return;
+        const c=getCase(id);if(!c)return;state.caseForm=clone(c);state.caseForm.setIds=currentSets().filter(set=>(set.caseIds||[]).includes(c.id)).map(set=>set.id);state.caseForm.type='scenario';state.caseForm.creationMode='manual';state.caseDirty=false;state.route='case-editor';state.overlay=null;window.scrollTo({top:0});render();return;
       }
       if(action==='leave-editor'){if(!state.caseDirty||window.confirm('当前用例还有未保存修改，确定离开吗？')){const returnRoute=state.caseForm?.returnRoute||'tests';state.caseDirty=false;state.caseForm=null;state.route=returnRoute;state.overlay=null;render();}return;}
       if(action==='fill-case-demo'){
@@ -2302,7 +2346,7 @@
         const f=state.caseForm,source=productionSourceAgents.find(agent=>agent.id===f.sourceAgentId)||productionSourceAgents[0];
         const count=Math.max(1,Math.min(20,Number(f.historyCount)||5));
         const drafts=Array.from({length:count},(_,index)=>{const draft=historyScenarioDraft(index,source);draft.historySource.range=f.historyRange||'最近 30 天';draft.historySource.scope=f.historyScope;draft.historySource.instruction=f.historyInstruction||'';return draft;});
-        currentTests().unshift(...drafts);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testView='cases';state.testTab='待确认';window.scrollTo({top:0});showToast(`已生成 ${count} 条场景草稿`,'请逐条核对模拟客户说明、处理正确的条件、变量和模拟系统结果；确认前不会参加正式测试。');return;
+        currentTests().unshift(...drafts);attachCasesToSets(drafts,f.setIds);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testView='cases';state.testTab='待确认';window.scrollTo({top:0});showToast(`已生成 ${count} 条场景草稿`,'请逐条核对模拟客户说明、处理正确的条件、变量和模拟系统结果；确认前不会参加正式测试。');return;
       }
       if(action==='copy-import-prompt'){
         const copy=()=>showToast('提示词已复制','可以把业务材料和这段提示词一起交给其他 AI，生成 JSON 文件。');
@@ -2320,7 +2364,14 @@
       }
       if(action==='import-json-cases'){
         const imported=state.caseForm.importCases||[];if(!imported.length){showToast('没有可导入的用例','请先选择并检查 JSON 文件。','warn');return;}
-        currentTests().unshift(...imported);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testView='cases';state.testTab='待确认';window.scrollTo({top:0});showToast(`已导入 ${imported.length} 条用例`,'导入内容已进入“待确认”，人工确认后才能参加测试。');return;
+        currentTests().unshift(...imported);attachCasesToSets(imported,f.setIds);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testView='cases';state.testTab='待确认';window.scrollTo({top:0});showToast(`已导入 ${imported.length} 条用例`,'导入内容已进入“待确认”，人工确认后才能参加测试。');return;
+      }
+      if(action==='toggle-case-set'){
+        event.stopPropagation();
+        const f=state.caseForm;if(!f)return;
+        const list=f.setIds||(f.setIds=[]);
+        f.setIds=list.includes(id)?list.filter(item=>item!==id):[...list,id];
+        state.caseDirty=true;render();return;
       }
       if(action==='toggle-agent-case'){
         const selected=state.caseForm.otherAgentCaseIds||[];state.caseForm.otherAgentCaseIds=selected.includes(id)?selected.filter(item=>item!==id):[...selected,id];render();return;
@@ -2335,11 +2386,11 @@
         const set=(source.sets||[]).find(item=>item.id===f.otherAgentSetId)||null;
         const drafts=source.cases.map((item,index)=>({item,index})).filter(({index})=>selected.includes(`${source.id}-${index}`)).map(({item})=>draftFromAgentCase(item,source,set&&set.name));
         if(!drafts.length){showToast('还没有选择用例','至少选择一条用例后再导入。','warn');return;}
-        currentTests().unshift(...drafts);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testView='cases';state.testTab='待确认';window.scrollTo({top:0});showToast(`已从 ${source.name} 导入 ${drafts.length} 条用例`,'导入的是独立副本，请逐条核对后确认。');return;
+        currentTests().unshift(...drafts);attachCasesToSets(drafts,f.setIds);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testView='cases';state.testTab='待确认';window.scrollTo({top:0});showToast(`已从 ${source.name} 导入 ${drafts.length} 条用例`,'导入的是独立副本，请逐条核对后确认。');return;
       }
       if(action==='generate-ai-cases'){
         const f=state.caseForm,count=Math.max(1,Math.min(20,Number(f.aiCount)||5)),drafts=Array.from({length:count},(_,index)=>aiGeneratedDraft(index,f.aiBrief||''));
-        currentTests().unshift(...drafts);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testView='cases';state.testTab='待确认';window.scrollTo({top:0});showToast(`AI 已生成 ${count} 条用例`,'生成内容已进入“待确认”，请检查后再参加测试。');return;
+        currentTests().unshift(...drafts);attachCasesToSets(drafts,f.setIds);state.caseForm=null;state.caseDirty=false;state.route='tests';state.testView='cases';state.testTab='待确认';window.scrollTo({top:0});showToast(`AI 已生成 ${count} 条用例`,'生成内容已进入“待确认”，请检查后再参加测试。');return;
       }
       if(action==='case-type'){state.caseForm.type=target.dataset.type;state.caseDirty=true;render();return;}
       if(action==='reset-case-type'){
